@@ -100,6 +100,10 @@ function hideAlert() {
 // Check page for keyword(s)
 //
 function checkKeyword(keywordRE) {
+	if (!keywordRE) {
+		return false; // nothing to find!
+	}
+
 	// Get all text nodes in document
 	let textNodes = document.evaluate(
 		"//text()", document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
@@ -107,7 +111,8 @@ function checkKeyword(keywordRE) {
 	//console.log("Checking " + textNodes.snapshotLength + " text node(s) for keyword(s)...");
 
 	for (let i = 0; i < textNodes.snapshotLength; i++) {
-		if (keywordRE && keywordRE.test(textNodes.snapshotItem(i).data)) {
+		let data = textNodes.snapshotItem(i).data;
+		if (data && keywordRE.test(data)) {
 			return true; // keyword(s) found
 		}
 	}
@@ -141,7 +146,7 @@ function handleMessage(message, sender, sendResponse) {
 	} else if (message.type == "alert") {
 		showAlert(message.text);
 	} else if (message.type == "keyword") {
-		let keyword = checkKeyword(new RegExp(message.keywordRE, "i")); // Chrome workaround
+		let keyword = checkKeyword(new RegExp(message.keywordRE, "iu")); // Chrome workaround
 		sendResponse(keyword);
 	} else if (message.type == "filter") {
 		applyFilter(message.name);
