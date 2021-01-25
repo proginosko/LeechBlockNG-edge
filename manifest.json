@@ -20,7 +20,8 @@
 		{
 			"matches": ["<all_urls>"],
 			"css": ["content.css"],
-			"js": ["content.js"]
+			"js": ["content.js"],
+			"run_at": "document_start"
 		}
 	],
 
@@ -58,6 +59,6 @@
 		"webNavigation"
 	],
 
-	"version": "1.0.8"
+	"version": "1.0.10"
 
 }
