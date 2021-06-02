@@ -38,6 +38,8 @@
 		"128": "icons/leechblock128.png"
 	},
 
+	"incognito": "split",
+
 	"manifest_version": 2,
 
 	"name": "LeechBlock NG",
@@ -59,6 +61,6 @@
 		"webNavigation"
 	],
 
-	"version": "1.0.10"
+	"version": "1.0.12"
 
 }
