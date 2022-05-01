@@ -18,7 +18,8 @@ var gAccessConfirmed = false;
 var gAccessRequiredInput;
 var gFormHTML;
 var gNumSets, gNumSetsMin;
-var gSetDisabled = [];
+var gSetDisabled;
+var gSetOrdering, gSetReordered;
 var gTabIndex = 0;
 var gNewOpen = true;
 
@@ -33,10 +34,14 @@ function initForm(numSets) {
 	gNumSets = +numSets;
 	gNumSetsMin = 1;
 
-	// All sets enabled at initialization
+	// All sets enabled and in order at initialization
+	gSetDisabled = [];
+	gSetOrdering = [];
 	for (let set = 1; set <= gNumSets; set++) {
 		gSetDisabled[set] = false;
+		gSetOrdering[set] = set;
 	}
+	gSetReordered = false;
 
 	// Set maximum number of block sets
 	$("#maxSets").text(MAX_SETS);
@@ -100,6 +105,7 @@ function initForm(numSets) {
 		});
 		$(`#advOpts${set}`).css("display", "none");
 	}
+	$("#overridePasswordShow").change(overridePasswordShow);
 	$("#theme").change(function (e) { setTheme($("#theme").val()); });
 	$("#clockOffset").click(showClockOffsetTime);
 	$("#clockOffset").keyup(showClockOffsetTime);
@@ -108,6 +114,7 @@ function initForm(numSets) {
 	$("#importOptions").click(importOptions);
 	$("#exportOptionsSync").click(exportOptionsSync);
 	$("#importOptionsSync").click(importOptionsSync);
+	$("#openDiagnostics").click(openDiagnostics);
 	$("#saveOptions").button();
 	$("#saveOptions").click({ closeOptions: false }, saveOptions);
 	$("#saveOptionsClose").button();
@@ -137,6 +144,14 @@ function initForm(numSets) {
 // Swap two sets
 //
 function swapSets(set1, set2) {
+	// Keep track of reordering
+	let order1 = gSetOrdering[set1];
+	let order2 = gSetOrdering[set2];
+	gSetOrdering[set1] = order2;
+	gSetOrdering[set2] = order1;
+	gSetReordered = true;
+
+	// Swap set options and update form
 	swapSetOptions(set1, set2);
 	updateBlockSetName(set1, $(`#setName${set1}`).val());
 	updateBlockSetName(set2, $(`#setName${set2}`).val());
@@ -324,6 +339,11 @@ function saveOptions(event) {
 
 	let complete = event.data.closeOptions ? closeOptions : retrieveOptions;
 
+	let message = {
+		type: "options",
+		ordering: gSetReordered ? gSetOrdering : null
+	};
+
 	if (options["sync"]) {
 		// Set sync option in local storage and all options in sync storage
 		browser.storage.local.set({ sync: true });
@@ -331,7 +351,7 @@ function saveOptions(event) {
 			if (browser.runtime.lastError) {
 				warn("Cannot set options: " + browser.runtime.lastError.message);
 			} else {
-				browser.runtime.sendMessage({ type: "options" });
+				browser.runtime.sendMessage(message);
 				$("#form").hide({ effect: "fade", complete: complete });
 			}
 		});
@@ -346,7 +366,7 @@ function saveOptions(event) {
 			if (browser.runtime.lastError) {
 				warn("Cannot set options: " + browser.runtime.lastError.message);
 			} else {
-				browser.runtime.sendMessage({ type: "options" });
+				browser.runtime.sendMessage(message);
 				$("#form").hide({ effect: "fade", complete: complete });
 			}
 		});
@@ -435,6 +455,9 @@ function retrieveOptions() {
 
 		// Check whether access to options should be prevented
 		for (let set = 1; set <= gNumSets; set++) {
+			// Do nothing if set is disabled
+			if (options[`disable${set}`]) continue;
+
 			// Get options
 			let timedata = options[`timedata${set}`];
 			let times = options[`times${set}`];
@@ -443,8 +466,11 @@ function retrieveOptions() {
 			let limitPeriod = options[`limitPeriod${set}`];
 			let limitOffset = options[`limitOffset${set}`];
 			let periodStart = getTimePeriodStart(now, limitPeriod, limitOffset);
+			let rollover = options[`rollover${set}`];
 			let conjMode = options[`conjMode${set}`];
 			let days = options[`days${set}`];
+
+			updateRolloverTime(timedata, limitMins, limitPeriod, periodStart);
 
 			// Check day
 			let onSelectedDay = days[timedate.getDay()];
@@ -461,13 +487,10 @@ function retrieveOptions() {
 			}
 
 			// Check time limit
-			let afterTimeLimit = false;
-			if (onSelectedDay && limitMins && limitPeriod) {
-				// Check time period and time limit
-				if (timedata[2] == periodStart && timedata[3] >= (limitMins * 60)) {
-					afterTimeLimit = true;
-				}
-			}
+			let secsRollover = rollover ? timedata[5] : 0;
+			let afterTimeLimit = (onSelectedDay && limitMins && limitPeriod)
+					&& (timedata[2] == periodStart)
+					&& (timedata[3] >= secsRollover + (limitMins * 60));
 
 			// Check lockdown condition
 			let lockdown = (timedata[4] > now);
@@ -622,6 +645,14 @@ function displayAccessCode(code, asImage) {
 			codeText.appendChild(document.createTextNode(code));
 		}
 	}
+}
+
+// Show/hide override password
+//
+function overridePasswordShow() {
+	let input = getElement("overridePassword");
+	let checkbox = getElement("overridePasswordShow");
+	input.type = checkbox.checked ? "text" : "password";
 }
 
 // Show adjusted time based on clock offset
@@ -871,6 +902,14 @@ function importOptionsSync(event) {
 			$("#alertImportSuccess").dialog("open");
 		}
 	}
+}
+
+// Open diagnostics page
+//
+function openDiagnostics() {
+	let fullURL = browser.runtime.getURL("diagnostics.html");
+
+	browser.tabs.create({ url: fullURL });
 }
 
 // Swap options for two block sets

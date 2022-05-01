@@ -6,8 +6,11 @@ const browser = chrome;
 
 const TICK_TIME = 1000; // update every second
 
-const BLOCKABLE_URL = /^(http|file|chrome|edge)/i;
+const BLOCKABLE_URL = /^(http|file|chrome|edge|extension)/i;
 const CLOCKABLE_URL = /^(http|file)/i;
+const EXTENSION_URL = browser.runtime.getURL("");
+const BLOCKED_PAGE_URL = browser.runtime.getURL(BLOCKED_PAGE);
+const DELAYED_PAGE_URL = browser.runtime.getURL(DELAYED_PAGE);
 
 function log(message) { console.log("[LBNG] " + message); }
 function warn(message) { console.warn("[LBNG] " + message); }
@@ -16,11 +19,13 @@ var gStorage = browser.storage.local;
 var gIsAndroid = false;
 var gGotOptions = false;
 var gOptions = {};
+var gDiagMode = false;
 var gNumSets;
 var gTabs = [];
 var gSetCounted = [];
 var gSavedTimeData = [];
 var gRegExps = [];
+var gPrevActiveTabId = 0;
 var gFocusWindowId = 0;
 var gAllFocused = false;
 var gOverrideIcon = false;
@@ -37,7 +42,8 @@ function initTab(id) {
 			allowedPath: null,
 			allowedSet: 0,
 			referrer: "",
-			url: "about:blank"
+			url: "about:blank",
+			loaded: false
 		};
 		return true;
 	}
@@ -199,6 +205,8 @@ function retrieveOptions(update) {
 		cleanOptions(gOptions);
 		cleanTimeData(gOptions);
 
+		gDiagMode = gOptions["diagMode"];
+
 		gNumSets = +gOptions["numSets"];
 
 		gAllFocused = gOptions["allFocused"];
@@ -330,6 +338,31 @@ function restartTimeData(set) {
 	saveTimeData();
 }
 
+// Reorder time data
+//
+function reorderTimeData(ordering) {
+	//log("reorderTimeData: " + ordering);
+
+	if (!ordering) {
+		return;
+	}
+
+	// Create copy of time data for each set
+	let timedata = [];
+	for (let set = 1; set <= gNumSets; set++) {
+		timedata[set] = gOptions[`timedata${set}`].slice();
+	}
+
+	// Reorder time data according to specified ordering
+	for (let set = 1; set <= gNumSets; set++) {
+		if (ordering[set] <= gNumSets) {
+			gOptions[`timedata${set}`] = timedata[ordering[set]];
+		}
+	}
+
+	saveTimeData();
+}
+
 // Update ID of focused window
 //
 function updateFocusedWindowId() {
@@ -378,10 +411,12 @@ function processTabs(active) {
 			clockPageTime(tab.id, false, false);
 			clockPageTime(tab.id, true, focus);
 
-			let blocked = checkTab(tab.id, false, true);
-
-			if (!blocked && tab.active) {
-				updateTimer(tab.id);
+			if (gTabs[tab.id].loaded) {
+				let blocked = checkTab(tab.id, false, true);
+	
+				if (!blocked && tab.active) {
+					updateTimer(tab.id);
+				}
 			}
 		}
 	}
@@ -406,18 +441,16 @@ function checkTab(id, isBeforeNav, isRepeat) {
 	gTabs[id].blockable = BLOCKABLE_URL.test(url);
 	gTabs[id].clockable = CLOCKABLE_URL.test(url);
 
-	// Quick exit for about:blank and extension pages
-	if (url == "about:blank" || /^(chrome-)?extension/i.test(url)) {
-		return false; // not blocked
-	}
-
-	// Quick exit for LeechBlock website (documentation should be always available)
-	if (url.startsWith(LEECHBLOCK_URL)) {
-		return false; // not blocked
-	}
-
-	// Quick exit for non-blockable URLs
-	if (!gTabs[id].blockable) {
+	// Quick exit for the following cases:
+	// - about:blank
+	// - non-blockable URLs
+	// - blocking/delaying pages
+	// - LeechBlock website (documentation should always be available)
+	if (url == "about:blank"
+			|| !gTabs[id].blockable
+			|| url.startsWith(BLOCKED_PAGE_URL)
+			|| url.startsWith(DELAYED_PAGE_URL)
+			|| url.startsWith(LEECHBLOCK_URL)) {
 		return false; // not blocked
 	}
 
@@ -453,6 +486,9 @@ function checkTab(id, isBeforeNav, isRepeat) {
 	gTabs[id].showTimer = false;
 
 	for (let set = 1; set <= gNumSets; set++) {
+		// Do nothing if set is disabled
+		if (gOptions[`disable${set}`]) continue;
+
 		if (allowHost && allowPath && allowSet == set) {
 			// Allow delayed site/page
 			continue;
@@ -498,6 +534,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let limitPeriod = gOptions[`limitPeriod${set}`];
 			let limitOffset = gOptions[`limitOffset${set}`];
 			let periodStart = getTimePeriodStart(now, limitPeriod, limitOffset);
+			let rollover = gOptions[`rollover${set}`];
 			let conjMode = gOptions[`conjMode${set}`];
 			let days = gOptions[`days${set}`];
 			let blockURL = gOptions[`blockURL${set}`];
@@ -509,6 +546,8 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let allowOverride = gOptions[`allowOverride${set}`];
 			let showTimer = gOptions[`showTimer${set}`];
 			let allowKeywords = gOptions[`allowKeywords${set}`];
+
+			updateRolloverTime(timedata, limitMins, limitPeriod, periodStart);
 
 			// Check day
 			let onSelectedDay = days[timedate.getDay()];
@@ -537,7 +576,8 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let secsLeftBeforeLimit = Infinity;
 			if (onSelectedDay && limitMins && limitPeriod) {
 				// Compute exact seconds before this time limit expires
-				secsLeftBeforeLimit = limitMins * 60;
+				let secsRollover = rollover ? timedata[5] : 0;
+				secsLeftBeforeLimit = secsRollover + (limitMins * 60);
 				if (timedata[2] == periodStart) {
 					let secs = secsLeftBeforeLimit - timedata[3];
 					secsLeftBeforeLimit = Math.max(0, secs);
@@ -562,6 +602,35 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			if (!override && doBlock && (!isRepeat || activeBlock)) {
 
 				function applyBlock(keyword) {
+					if (gDiagMode) {
+						log("### BLOCK APPLIED ###");
+						log(`id: ${id}`);
+						log(`isBeforeNav: ${isBeforeNav}`);
+						log(`isRepeat: ${isRepeat}`);
+						log(`timedate: ${timedate}`);
+						log(`set: ${set}`);
+						log(`pageURL: ${pageURL}`);
+						log(`referrer: ${referrer}`);
+						log(`lockdown: ${lockdown}`);
+						log(`withinTimePeriods: ${withinTimePeriods}`);
+						log(`afterTimeLimit: ${afterTimeLimit}`);
+						log(`blockURL: ${blockURL}`);
+						if (blockRE) {
+							let res = blockRE.exec(pageURL);
+							if (res) {
+								log(`blockRE.exec: ${res[0]}`);
+							}
+						}
+						if (referRE) {
+							let res = referRE.exec(referrer);
+							if (res) {
+								log(`referRE.exec: ${res[0]}`);
+							}
+						}
+						if (keyword) {
+							log(`keyword: ${keyword}`);
+						}
+					}
 					if (closeTab) {
 						// Close tab
 						browser.tabs.remove(id);
@@ -776,9 +845,11 @@ function updateTimeData(url, referrer, secsOpen, secsFocus) {
 			let countFocus = gOptions[`countFocus${set}`];
 			let times = gOptions[`times${set}`];
 			let minPeriods = getMinPeriods(times);
+			let limitMins = gOptions[`limitMins${set}`];
 			let limitPeriod = gOptions[`limitPeriod${set}`];
 			let limitOffset = gOptions[`limitOffset${set}`];
 			let periodStart = getTimePeriodStart(now, limitPeriod, limitOffset);
+			let rollover = gOptions[`rollover${set}`];
 			let conjMode = gOptions[`conjMode${set}`];
 			let days = gOptions[`days${set}`];
 
@@ -790,9 +861,13 @@ function updateTimeData(url, referrer, secsOpen, secsFocus) {
 			}
 
 			// Reset time data if currently invalid
-			if (!Array.isArray(timedata) || timedata.length != 5) {
-				timedata = [now, 0, 0, 0, 0];
+			if (!Array.isArray(timedata)) {
+				timedata = [now, 0, 0, 0, 0, 0, 0, 0];
+			} else while (timedata.length < 8) {
+				timedata.push(0);
 			}
+
+			updateRolloverTime(timedata, limitMins, limitPeriod, periodStart);
 
 			// Get number of seconds spent on page (focused or open)
 			let secsSpent = countFocus ? secsFocus : secsOpen;
@@ -828,6 +903,10 @@ function updateTimeData(url, referrer, secsOpen, secsFocus) {
 					// We haven't entered a new time period, so keep counting
 					timedata[3] = +timedata[3] + secsSpent;
 				}
+				
+				// Update rollover time for next period
+				timedata[6] = Math.max(0, (limitMins * 60) - timedata[3]);
+				timedata[7] = periodStart + (+limitPeriod);
 			}
 
 			// Update time data for this set
@@ -992,13 +1071,16 @@ function getUnblockTime(set) {
 	let limitPeriod = gOptions[`limitPeriod${set}`];
 	let limitOffset = gOptions[`limitOffset${set}`];
 	let periodStart = getTimePeriodStart(now, limitPeriod, limitOffset);
+	let rollover = gOptions[`rollover${set}`];
 	let conjMode = gOptions[`conjMode${set}`];
 	let days = gOptions[`days${set}`];
 
 	// Check for valid time data
-	if (!Array.isArray(timedata) || timedata.length != 5) {
+	if (!Array.isArray(timedata) || timedata.length < 8) {
 		return null;
 	}
+
+	updateRolloverTime(timedata, limitMins, limitPeriod, periodStart);
 
 	// Check for 24/7 block
 	if (times == ALL_DAY_TIMES && allTrue(days) && !conjMode) {
@@ -1086,8 +1168,9 @@ function getUnblockTime(set) {
 			// Case 4: within time periods OR after time limit
 
 			// Determine whether time limit was exceeded
+			let secsRollover = rollover ? timedata[5] : 0;
 			let afterTimeLimit = (timedata[2] == periodStart)
-					&& (timedata[3] >= (limitMins * 60));
+					&& (timedata[3] >= secsRollover + (limitMins * 60));
 
 			if (afterTimeLimit) {
 				// Check against end time for current time limit period instead
@@ -1152,21 +1235,19 @@ function applyOverride(endTime) {
 		return;
 	}
 
-	if (endTime) {
-		// Update option
-		gOptions["oret"] = endTime;
+	// Update option
+	gOptions["oret"] = endTime;
 
-		// Save updated option to storage
-		let options = {};
-		options["oret"] = endTime;
-		gStorage.set(options, function () {
-			if (browser.runtime.lastError) {
-				warn("Cannot set options: " + browser.runtime.lastError.message);
-			}
-		});
+	// Save updated option to storage
+	let options = {};
+	options["oret"] = endTime;
+	gStorage.set(options, function () {
+		if (browser.runtime.lastError) {
+			warn("Cannot set options: " + browser.runtime.lastError.message);
+		}
+	});
 
-		updateIcon();
-	}
+	updateIcon();
 }
 
 // Open extension page (either create new tab or activate existing tab)
@@ -1329,6 +1410,7 @@ function handleMessage(message, sender, sendResponse) {
 		case "options":
 			// Options updated
 			retrieveOptions(true);
+			reorderTimeData(message.ordering);
 			break;
 
 		case "override":
@@ -1345,6 +1427,11 @@ function handleMessage(message, sender, sendResponse) {
 			// Restart time data requested by statistics page
 			restartTimeData(message.set);
 			sendResponse();
+			break;
+
+		case "loaded":
+			// Register that content script has been loaded
+			gTabs[sender.tab.id].loaded = true;
 			break;
 
 	}
@@ -1393,6 +1480,8 @@ function handleTabActivated(activeInfo) {
 	let tabId = activeInfo.tabId;
 	//log("handleTabActivated: " + tabId);
 
+	gPrevActiveTabId = activeInfo.previousTabId;
+
 	initTab(tabId);
 
 	if (!gGotOptions) {
@@ -1419,6 +1508,11 @@ function handleTabRemoved(tabId, removeInfo) {
 	}
 
 	clockPageTime(tabId, false, false);
+
+	// If extension page closed, activate previously active tab
+	if (gTabs[tabId] && gTabs[tabId].url.startsWith(EXTENSION_URL)) {
+		browser.tabs.update(gPrevActiveTabId, { active: true });
+	}
 }
 
 function handleBeforeNavigate(navDetails) {
@@ -1434,6 +1528,7 @@ function handleBeforeNavigate(navDetails) {
 	clockPageTime(tabId, false, false);
 
 	if (navDetails.frameId == 0) {
+		gTabs[tabId].loaded = false
 		gTabs[tabId].url = navDetails.url;
 
 		let blocked = checkTab(tabId, true, false);
