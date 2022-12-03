@@ -79,12 +79,14 @@ const GENERAL_OPTIONS = {
 	timerBadge: { type: "boolean", def: true, id: "timerBadge" }, // default: enabled
 	orm: { type: "string", def: "", id: "overrideMins" }, // default: no prespecified override
 	ora: { type: "string", def: "0", id: "overrideAccess" }, // default: no password or code
+	orcode: { type: "string", def: "", id: "overrideCode" }, // default: blank
 	orp: { type: "string", def: "", id: "overridePassword" }, // default: blank
 	orc: { type: "boolean", def: true, id: "overrideConfirm" }, // default: enabled
 	warnSecs: { type: "string", def: "", id: "warnSecs" }, // default: no warning
 	warnImmediate: { type: "boolean", def: true, id: "warnImmediate" }, // default: warn only for immediate block
 	contextMenu: { type: "boolean", def: true, id: "contextMenu" }, // default: enabled
 	matchSubdomains: { type: "boolean", def: false, id: "matchSubdomains" }, // default: disabled
+	clockTimeFormat: { type: "string", def: "0", id: "clockTimeFormat" }, // default: locale default
 	saveSecs: { type: "string", def: "10", id: "saveSecs" }, // default: every 10 seconds
 	clockOffset: { type: "string", def: "", id: "clockOffset" }, // default: no offset
 	allFocused: { type: "boolean", def: false, id: "allFocused" }, // default: disabled
@@ -258,12 +260,12 @@ function getRegExpSites(sites, matchSubdomains) {
 	}
 	return {
 		block: (blocks.length > 0)
-				? "^" + (blockFiles ? "file:|" : "") + "(https?|file):\\/+(" + blocks.join("|") + ")"
+				? "^" + (blockFiles ? "file:|" : "") + "(https?|file):\\/+([\\w\\:]+@)?(" + blocks.join("|") + ")"
 				: (blockFiles ? "^file:" : ""),
 		allow: (allows.length > 0)
-				? "^" + (allowFiles ? "file:|" : "") + "(https?|file):\\/+(" + allows.join("|") + ")"
+				? "^" + (allowFiles ? "file:|" : "") + "(https?|file):\\/+([\\w\\:]+@)?(" + allows.join("|") + ")"
 				: (allowFiles ? "^file:" : ""),
-		refer: (refers.length > 0) ? "^(https?|file):\\/+(" + refers.join("|") + ")" : "",
+		refer: (refers.length > 0) ? "^(https?|file):\\/+([\\w\\:]+@)?(" + refers.join("|") + ")" : "",
 		keyword: (keywords.length > 0)
 				? U_WORD_BEGIN + "(" + keywords.join("|") + ")" + U_WORD_END
 				: ""
@@ -287,7 +289,7 @@ function patternToRegExp(pattern, matchSubdomains) {
 // Convert keyword to regular expression
 //
 function keywordToRegExp(keyword) {
-	let special = /[\.\|\?\:\+\-\^\$\(\)\[\]\{\}\\]/g;
+	let special = /[\.\|\?\+\^\$\(\)\[\]\{\}\\]/g;
 	return keyword
 			.replace(special, "\\$&")			// fix special chars
 			.replace(/_+/g, "\\s+")				// convert underscores

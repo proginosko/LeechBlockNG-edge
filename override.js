@@ -14,6 +14,8 @@ var gAccessRequiredInput;
 var gClockOffset;
 var gOverrideConfirm;
 var gOverrideMins;
+var gOverrideSetNames = [];
+var gClockTimeOpts;
 
 // Initialize form
 //
@@ -62,10 +64,30 @@ function initializePage() {
 
 		setTheme(options["theme"]);
 
+		// Get clock time format
+		gClockTimeOpts = {};
+		let clockTimeFormat = options["clockTimeFormat"];
+		if (clockTimeFormat > 0) {
+			gClockTimeOpts.hour12 = (clockTimeFormat == 1);
+		}
+
 		gClockOffset = options["clockOffset"];
 
 		gOverrideConfirm = options["orc"];
 		gOverrideMins = options["orm"];
+
+		// Get list of sets to override
+		let numSets = +options["numSets"];
+		for (let set = 1; set <= numSets; set++) {
+			if (options[`allowOverride${set}`]) {
+				let setName = options[`setName${set}`];
+				if (setName) {
+					gOverrideSetNames.push(`Block Set ${set} (${setName})`);
+				} else {
+					gOverrideSetNames.push(`Block Set ${set}`);
+				}
+			}
+		}
 
 		confirmAccess(options);
 	}
@@ -83,6 +105,7 @@ function closePage() {
 function confirmAccess(options) {
 	let ora = options["ora"];
 	let orp = options["orp"];
+	let code = options["orcode"];
 	let password = options["password"];
 	let hpp = options["hpp"];
 
@@ -96,6 +119,12 @@ function confirmAccess(options) {
 		$("#promptPasswordInput").val("");
 		$("#promptPassword").dialog("open");
 		$("#promptPasswordInput").focus();
+	} else if (ora == 8 && code) {
+		gAccessRequiredInput = code;
+		numLines = displayAccessCode(code, options["accessCodeImage"]);
+		resizePromptInputHeight(numLines);
+		$("#promptAccessCode").dialog("open");
+		$("#promptAccessCodeInput").focus();
 	} else if (ora == 9 && orp) {
 		gAccessRequiredInput = orp;
 		$("#promptPasswordInput").attr("type", "password");
@@ -111,7 +140,8 @@ function confirmAccess(options) {
 			code += createAccessCode(64);
 		}
 		gAccessRequiredInput = code;
-		displayAccessCode(code, options["accessCodeImage"]);
+		numLines = displayAccessCode(code, options["accessCodeImage"]);
+		resizePromptInputHeight(numLines);
 		$("#promptAccessCodeInput").val("");
 		$("#promptAccessCode").dialog("open");
 		$("#promptAccessCodeInput").focus();
@@ -131,6 +161,19 @@ function displayAccessCode(code, asImage) {
 	let codeImage = getElement("promptAccessCodeImage");
 	let codeCanvas = getElement("promptAccessCodeCanvas");
 
+	let lines = [];
+	let idx = 0;
+	do {
+		let spaceIdx = (idx + 64 >= code.length) ? code.length : code.lastIndexOf(" ", idx + 64);
+		if (spaceIdx == -1) {
+			lines.push(code.substring(idx, idx + 64));
+			idx += 64;
+		} else {
+			lines.push(code.substring(idx, spaceIdx));
+			idx = spaceIdx + 1;
+		}
+	} while (idx < code.length - 1);
+
 	if (asImage) {
 		// Display code as image
 		codeText.style.display = "none";
@@ -138,7 +181,7 @@ function displayAccessCode(code, asImage) {
 		let ctx = codeCanvas.getContext("2d");
 		ctx.font = "normal 14px monospace";
 		let width = ctx.measureText(code.substring(0, 64)).width + 8;
-		let height = (code.length == 128) ? 40 : 24;
+		let height = lines.length * 16 + 8;
 		codeCanvas.width = width * devicePixelRatio;
 		codeCanvas.height = height * devicePixelRatio;
 		ctx.scale(devicePixelRatio, devicePixelRatio);
@@ -146,24 +189,34 @@ function displayAccessCode(code, asImage) {
 		codeCanvas.style.height = height + 'px';
 		ctx.font = "normal 14px monospace"; // resizing canvas resets font!
 		ctx.fillStyle = "#000";
-		if (code.length == 128) {
-			ctx.fillText(code.substring(0, 64), 4, 16);
-			ctx.fillText(code.substring(64), 4, 32);
-		} else {
-			ctx.fillText(code, 4, 16);
+		for (let i = 0; i < lines.length; i++) {
+			ctx.fillText(lines[i], 4, 16 * (i+1));
 		}
 	} else {
 		// Display code as text
 		codeText.style.display = "";
 		codeImage.style.display = "none";
-		if (code.length == 128) {
-			codeText.appendChild(document.createTextNode(code.substring(0, 64)));
+		for (let i = 0; i < lines.length; i++) {
+			codeText.appendChild(document.createTextNode(lines[i]));
 			codeText.appendChild(document.createElement("br"));
-			codeText.appendChild(document.createTextNode(code.substring(64)));
-		} else {
-			codeText.appendChild(document.createTextNode(code));
 		}
 	}
+
+	return lines.length;
+}
+
+// Convert #promptAccessCodeInput to a textarea and resize its height based
+// on the number of lines of the access code
+//
+function resizePromptInputHeight(numLines) {
+	if (numLines < 2) return;
+	let codeInput = getElement("promptAccessCodeInput");
+	let textarea = document.createElement("textarea");
+	textarea.id = codeInput.id;
+	textarea.font = codeInput.font;
+	textarea.rows = numLines;
+	textarea.cols = codeInput.size - 2; // need -2 to align input text with prompt
+	codeInput.replaceWith(textarea);
 }
 
 // Activate override
@@ -193,7 +246,12 @@ function activateOverride() {
 	if (gOverrideConfirm) {
 		// Show confirmation dialog
 		endTime = new Date(endTime * 1000);
-		$("#alertOverrideEndTime").html(endTime.toLocaleTimeString());
+		$("#alertOverrideEndTime").html(endTime.toLocaleTimeString(undefined, gClockTimeOpts));
+		if (gOverrideSetNames.length > 0) {
+			$("#alertOverrideNoSets").hide();
+			$("#alertOverrideSets").show();
+			$("#alertOverrideSetList").html("<ul><li>" + gOverrideSetNames.join("</li><li>") + "</li></ul>");
+		}
 		$("#alertOverrideActivated").dialog("open");
 	} else {
 		// Close page immediately (no confirmation dialog)
@@ -211,7 +269,8 @@ function initAccessControlPrompt(prompt) {
 			if (input.val() == gAccessRequiredInput) {
 				gAccessConfirmed = true;
 				if (gOverrideMins) {
-					activateOverride();
+					// Slight delay to allow focus to pass to new dialog
+					setTimeout(activateOverride, 100);
 				} else {
 					$("#form").show();
 				}
