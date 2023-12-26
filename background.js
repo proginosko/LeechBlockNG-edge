@@ -422,7 +422,7 @@ function processTabs(active) {
 			clockPageTime(tab.id, false, false);
 			clockPageTime(tab.id, true, focus);
 
-			if (/^(chrome|edge|extension)/i.test(tab.url)) {
+			if (/^(chrome|edge|extension|read)/i.test(tab.url)) {
 				gTabs[tab.id].loaded = true;
 				gTabs[tab.id].url = getCleanURL(tab.url);
 			}
