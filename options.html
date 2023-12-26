@@ -152,6 +152,14 @@
 							</p>
 							<hr>
 							<p>
+								<label>Block pages in</label>
+								<select id="incogMode1">
+									<option value="0">both non-private and private tabs</option>
+									<option value="1">only non-private tabs</option>
+									<option value="2">only private tabs</option>
+								</select>
+							</p>
+							<p>
 								<input id="applyFilter1" type="checkbox">
 								<label for="applyFilter1">Apply filter instead of blocking page:</label>
 								<select id="filterName1">
@@ -202,8 +210,17 @@
 								Attempt to reload blocked page every <input id="reloadSecs1" type="text" size="2"> seconds (only applies to default page)
 							</p>
 							<p>
+								<input id="addHistory1" type="checkbox">
+								<label for="addHistory1">Add blocked page to browser history</label>
+							</p>
+							<p>
 								<input id="allowOverride1" type="checkbox">
 								<label for="allowOverride1">Allow temporary override for these sites</label>
+							</p>
+							<p>
+								&nbsp;&nbsp;&nbsp;&nbsp;
+								<input id="allowOverLock1" type="checkbox">
+								<label for="allowOverLock1">Allow temporary override during lockdown</label>
 							</p>
 						</fieldset>
 						<p>
@@ -372,6 +389,15 @@
 								Allow blocking to be suspended for <input id="overrideMins" type="text" size="2" title="Leave blank to specify a duration when the override is activated"> minute(s)
 							</p>
 							<p>
+								Allow no more than <input id="overrideLimitNum" type="text" size="2" title="Leave blank for no limit"> override(s) every
+								<select id="overrideLimitPeriod">
+									<option value=""></option>
+									<option value="3600">hour</option>
+									<option value="86400">day</option>
+									<option value="604800">week</option>
+								</select>
+							</p>
+							<p>
 								<label>Select the requirement for activating the override:</label><br>
 								<div>
 									<select id="overrideAccess">
@@ -433,9 +459,6 @@
 								format
 							</p>
 							<p>
-								Save time data every <input id="saveSecs" type="text" size="2" title="Default: 10"> seconds
-							</p>
-							<p>
 								Offset clock by <input id="clockOffset" type="text" size="4" title="Leave blank for no offset"> minutes
 								&nbsp;&nbsp;&nbsp;&nbsp;
 								<span id="clockOffsetTime" style="display: none;"></span>
@@ -443,10 +466,6 @@
 							<p>
 								<input id="allFocused" type="checkbox">
 								<label for="allFocused">Treat browser windows as always focused</label>
-							</p>
-							<p>
-								<input id="processActiveTabs" type="checkbox">
-								<label for="processActiveTabs">Process only active tabs (improves performance when multiple tabs open)</label>
 							</p>
 							<p>
 								<input id="accessCodeImage" type="checkbox">
@@ -457,8 +476,25 @@
 								<label for="syncStorage">Use sync storage for options (experimental: use at your own risk!)</label>
 							</p>
 							<p>
+								<input id="allowLBWebsite" type="checkbox">
+								<label for="allowLBWebsite">Always allow access to LeechBlock website</label>
+							</p>
+							<p>
 								<input id="diagMode" type="checkbox">
 								<label for="diagMode">Diagnostic mode (outputs to browser console)</label>
+							</p>
+						</fieldset>
+						<fieldset>
+							<legend>Performance</legend>
+							<p>
+								Save time data every <input id="saveSecs" type="text" size="2" title="Default: 10"> second(s)
+							</p>
+							<p>
+								Process tabs every <input id="processTabsSecs" type="text" size="2" title="Default: 1"> second(s)
+							</p>
+							<p>
+								<input id="processActiveTabs" type="checkbox">
+								<label for="processActiveTabs">Process only active tabs (improves performance when multiple tabs open)</label>
 							</p>
 						</fieldset>
 						<fieldset>
@@ -555,6 +591,9 @@
 			</div>
 			<div id="alertBadMinutes" title="LeechBlock Options">
 				<p>Please enter the number of minutes in the correct format (as a positive whole number).</p>
+			</div>
+			<div id="alertBadOverrideLimitNum" title="LeechBlock Options">
+				<p>Please enter the number of overrides in the correct format (as a positive whole number).</p>
 			</div>
 			<div id="alertBadBlockURL" title="LeechBlock Options">
 				<p>Please enter the URL for the blocking page in the correct format (as a fully specified URL).</p>

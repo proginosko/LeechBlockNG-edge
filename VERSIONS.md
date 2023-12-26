@@ -1,3 +1,22 @@
+### Version 1.6.2 (26 Dec 2023)
+* Added option to limit number of overrides per hour/day/week.
+* Added option to block only private/non-private tabs.
+* Added option to add blocked page to browser history.
+* Added option to allow/disallow blocking LeechBlock website.
+* Bug fixes and under-the-hood improvements.
+
+### Version 1.6.1 (09 Dec 2023)
+* Under-the-hood improvements.
+
+### Version 1.6 (28 Oct 2023)
+* Updated for Manifest V3.
+* Added option to change time interval for processing tabs.
+* Please report any issues on GitHub: https://github.com/proginosko/
+
+### Version 1.5.8 (17 Sep 2023)
+* Added option to allow/disallow override during lockdown.
+* Bug fixes.
+
 ### Version 1.5.7 (02 Jul 2023)
 * Allowed drive specifiers in site list (e.g., C:/path/).
 * Added link to online documentation.

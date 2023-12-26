@@ -2,9 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const browser = chrome;
+importScripts("common.js");
 
-const TICK_TIME = 1000; // update every second
+const browser = chrome;
 
 const BLOCKABLE_URL = /^(http|file|chrome|edge|extension)/i;
 const CLOCKABLE_URL = /^(http|file)/i;
@@ -44,6 +44,7 @@ function initTab(id) {
 			allowedSet: 0,
 			referrer: "",
 			url: "about:blank",
+			incog: false,
 			loaded: false
 		};
 		return true;
@@ -91,7 +92,7 @@ function refreshMenus() {
 
 	browser.contextMenus.removeAll();
 
-	let context = gOptions["contextMenu"] ? "all" : "browser_action";
+	let context = gOptions["contextMenu"] ? "all" : "action";
 
 	// Options
 	browser.contextMenus.create({
@@ -122,6 +123,7 @@ function refreshMenus() {
 	});
 
 	browser.contextMenus.create({
+		id: "separator",
 		type: "separator",
 		contexts: [context]
 	});
@@ -165,6 +167,15 @@ function refreshMenus() {
 			contexts: [context]
 		});
 	}
+}
+
+// Refresh ticker for updates
+//
+function refreshTicker() {
+	let processTabsSecs = +gOptions["processTabsSecs"];
+	
+	// Send message to ticker (offscreen document)
+	browser.runtime.sendMessage({ type: "ticker", tickerSecs: processTabsSecs });
 }
 
 // Retrieve options from storage
@@ -214,6 +225,7 @@ function retrieveOptions(update) {
 
 		createRegExps();
 		refreshMenus();
+		refreshTicker();
 		loadSiteLists();
 		updateIcon();
 
@@ -236,24 +248,22 @@ function loadSiteLists() {
 		let sitesURL = gOptions[`sitesURL${set}`];
 		if (sitesURL) {
 			sitesURL = sitesURL.replace(/\$S/, set).replace(/\$T/, time);
-			try {
-				let req = new XMLHttpRequest();
-				req.set = set;
-				req.open("GET", sitesURL, true);
-				req.overrideMimeType("text/plain");
-				req.onload = onLoad;
-				req.send();
-			} catch (error) {
-				warn("Cannot load sites from URL: " + sitesURL);
-			}
+			fetch(sitesURL).then(
+				(response) => {
+					if (response.status == 200) {
+						response.text().then((text) => { onLoad(set, text); });
+					} else {
+						warn("Cannot load sites from URL: " + sitesURL);
+					}
+				},
+				(reason) => {
+					warn("Cannot load sites from URL: " + sitesURL);
+				});
 		}
 	}
 
-	function onLoad(event) {
-		let req = event.target;
-		if (req.readyState == XMLHttpRequest.DONE && req.status == 200) {
-			let set = req.set;
-			let sites = req.responseText;
+	function onLoad(set, sites) {
+		if (set && sites) {
 			sites = sites.replace(/\s+/g, " ").replace(/(^ +)|( +$)|(\w+:\/+)/g, "");
 			sites = sites.split(" ").sort().join(" "); // sort alphabetically
 
@@ -399,7 +409,7 @@ function processTabs(active) {
 
 	function onGot(tabs) {
 		if (browser.runtime.lastError) {
-			warn("Cannot get tabs: " + error);
+			warn("Cannot get tabs: " + browser.runtime.lastError.message);
 			return;
 		}
 
@@ -412,9 +422,9 @@ function processTabs(active) {
 			clockPageTime(tab.id, false, false);
 			clockPageTime(tab.id, true, focus);
 
-			if (tab.url.startsWith("about")) {
+			if (/^(chrome|edge|extension)/i.test(tab.url)) {
 				gTabs[tab.id].loaded = true;
-				gTabs[tab.id].url = tab.url;
+				gTabs[tab.id].url = getCleanURL(tab.url);
 			}
 
 			if (gTabs[tab.id].loaded) {
@@ -446,9 +456,6 @@ function checkTab(id, isBeforeNav, isRepeat) {
 
 	let url = gTabs[id].url;
 
-	// Remove view-source prefix if necessary
-	url = url.replace(/^view-source:/i, "");
-
 	gTabs[id].blockable = BLOCKABLE_URL.test(url);
 	gTabs[id].clockable = CLOCKABLE_URL.test(url);
 
@@ -456,12 +463,12 @@ function checkTab(id, isBeforeNav, isRepeat) {
 	// - about:blank
 	// - non-blockable URLs
 	// - blocking/delaying pages
-	// - LeechBlock website (documentation should always be available)
+	// - LeechBlock website (documentation should be available by default)
 	if (url == "about:blank"
 			|| !gTabs[id].blockable
 			|| url.startsWith(BLOCKED_PAGE_URL)
 			|| url.startsWith(DELAYED_PAGE_URL)
-			|| url.startsWith(LEECHBLOCK_URL)) {
+			|| (url.startsWith(LEECHBLOCK_URL) && gOptions["allowLBWebsite"])) {
 		return false; // not blocked
 	}
 
@@ -505,6 +512,11 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			continue;
 		}
 
+		// Check incognito mode
+		let incogMode = gOptions[`incogMode${set}`];
+		let incog = gTabs[id].incog;
+		if ((incogMode == 1 && incog) || (incogMode == 2 && !incog)) continue;
+
 		// Get URL of page (possibly with hash part)
 		let pageURL = parsedURL.page;
 		let pageURLWithHash = parsedURL.page;
@@ -514,6 +526,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 				pageURL = pageURLWithHash;
 			}
 		}
+		let isInternalPage = /^[a-z]+:\/\/(extensions|settings)/i.test(pageURL);
 
 		// Get regular expressions for matching sites to block/allow
 		let blockRE = gRegExps[set].block;
@@ -522,7 +535,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 		let keywordRE = gRegExps[set].keyword;
 		if (!blockRE && !referRE) continue; // no block for this set
 
-		if (keywordRE && isBeforeNav) continue; // too soon to check for keywords!
+		if (keywordRE && !isInternalPage && isBeforeNav) continue; // too soon to check for keywords!
 
 		// Get option for treating referrers as allow-conditions
 		let allowRefers = gOptions[`allowRefers${set}`];
@@ -554,7 +567,9 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let filterMute = gOptions[`filterMute${set}`];
 			let closeTab = gOptions[`closeTab${set}`];
 			let activeBlock = gOptions[`activeBlock${set}`];
+			let addHistory = gOptions[`addHistory${set}`];
 			let allowOverride = gOptions[`allowOverride${set}`];
+			let allowOverLock = gOptions[`allowOverLock${set}`];
 			let showTimer = gOptions[`showTimer${set}`];
 			let allowKeywords = gOptions[`allowKeywords${set}`];
 
@@ -602,7 +617,8 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let lockdown = (timedata[4] > now);
 
 			// Check override condition
-			let override = (overrideEndTime > now) && allowOverride;
+			let override = !isInternalPage && (overrideEndTime > now)
+					&& allowOverride && (allowOverLock || !lockdown);
 
 			// Determine whether this page should now be blocked
 			let doBlock = lockdown
@@ -663,6 +679,11 @@ function checkTab(id, isBeforeNav, isRepeat) {
 						gTabs[id].keyword = keyword;
 						gTabs[id].url = blockURL; // prevent reload loop on Chrome
 
+						if (addHistory && !isInternalPage) {
+							// Add blocked page to browser history
+							browser.history.addUrl({ url: pageURLWithHash });
+						}
+
 						// Get final URL for block page
 						blockURL = getLocalizedURL(blockURL)
 								.replace(/\$K/g, keyword ? keyword : "")
@@ -674,7 +695,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 					}
 				}
 
-				if (keywordRE) {
+				if (keywordRE && !isInternalPage) {
 					// Check for keyword(s) before blocking
 					let message = {
 						type: "keyword",
@@ -952,10 +973,10 @@ function updateTimer(id) {
 	// Set tooltip
 	if (!gIsAndroid) {
 		if (secsLeft == Infinity) {
-			browser.browserAction.setTitle({ title: "LeechBlock", tabId: id });
+			browser.action.setTitle({ title: "LeechBlock", tabId: id });
 		} else {
 			let title = "LeechBlock [" + formatTime(secsLeft) + "]"
-			browser.browserAction.setTitle({ title: title, tabId: id });
+			browser.action.setTitle({ title: title, tabId: id });
 		}
 	}
 
@@ -964,10 +985,10 @@ function updateTimer(id) {
 		let m = Math.floor(secsLeft / 60);
 		let s = Math.floor(secsLeft) % 60;
 		let text = m + ":" + ((s < 10) ? "0" + s : s);
-		browser.browserAction.setBadgeBackgroundColor({ color: "#666" });
-		browser.browserAction.setBadgeText({ text: text, tabId: id });
+		browser.action.setBadgeBackgroundColor({ color: "#666" });
+		browser.action.setBadgeText({ text: text, tabId: id });
 	} else {
-		browser.browserAction.setBadgeText({ text: "", tabId: id });
+		browser.action.setBadgeText({ text: "", tabId: id });
 	}
 }
 
@@ -987,10 +1008,10 @@ function updateIcon() {
 
 	// Change icon only if override status has changed
 	if (!gOverrideIcon && overrideEndTime > now) {
-		browser.browserAction.setIcon({ path: OVERRIDE_ICON });
+		browser.action.setIcon({ path: OVERRIDE_ICON });
 		gOverrideIcon = true;
 	} else if (gOverrideIcon && overrideEndTime <= now) {
-		browser.browserAction.setIcon({ path: DEFAULT_ICON });
+		browser.action.setIcon({ path: DEFAULT_ICON });
 		gOverrideIcon = false;
 	}
 }
@@ -1207,6 +1228,9 @@ function getUnblockTime(set) {
 							0, mp.end);
 				}
 			}
+			
+			// Return end time for current time limit period
+			return new Date(timedata[2] * 1000 + limitPeriod * 1000);
 		}
 	}
 
@@ -1253,12 +1277,40 @@ function applyOverride(endTime) {
 		return;
 	}
 
-	// Update option
-	gOptions["oret"] = endTime;
-
-	// Save updated option to storage
 	let options = {};
-	options["oret"] = endTime;
+
+	// Set override end time
+	options["oret"] = gOptions["oret"] = endTime;
+
+	if (endTime) {
+		// Get current time in seconds
+		let clockOffset = gOptions["clockOffset"];
+		let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+
+		// Update override limit count (if specified)
+		let orln = gOptions["orln"];
+		let orlp = gOptions["orlp"];
+		let orlps = gOptions["orlps"];
+		let orlc = gOptions["orlc"];
+		if (orln && orlp) {
+			let periodStart = getTimePeriodStart(now, orlp);
+			if (orlps != periodStart) {
+				// We've entered a new time period, so start new count
+				orlps = periodStart;
+				orlc = 1;
+			} else {
+				// We haven't entered a new time period, so keep counting
+				orlc++;
+			}
+		} else {
+			orlps = 0;
+			orlc = 0;
+		}
+		options["orlps"] = gOptions["orlps"] = orlps;
+		options["orlc"] = gOptions["orlc"] = orlc;
+	}
+
+	// Save updated options to storage
 	gStorage.set(options, function () {
 		if (browser.runtime.lastError) {
 			warn("Cannot set options: " + browser.runtime.lastError.message);
@@ -1467,7 +1519,8 @@ function handleMessage(message, sender, sendResponse) {
 		case "loaded":
 			// Register that content script has been loaded
 			gTabs[sender.tab.id].loaded = true;
-			gTabs[sender.tab.id].url = message.url;
+			gTabs[sender.tab.id].url = getCleanURL(message.url);
+			gTabs[sender.tab.id].incog = message.incog;
 			break;
 
 		case "lockdown":
@@ -1507,6 +1560,11 @@ function handleMessage(message, sender, sendResponse) {
 			sendResponse();
 			break;
 
+		case "tick":
+			// Tick received from ticker (offscreen document)
+			handleTick();
+			break;
+
 	}
 }
 
@@ -1535,7 +1593,7 @@ function handleTabUpdated(tabId, changeInfo, tab) {
 	let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId);
 
 	if (changeInfo.url) {
-		gTabs[tabId].url = changeInfo.url;
+		gTabs[tabId].url = getCleanURL(changeInfo.url);
 	}
 
 	if (changeInfo.status && changeInfo.status == "complete") {
@@ -1604,7 +1662,7 @@ function handleBeforeNavigate(navDetails) {
 
 	if (navDetails.frameId == 0) {
 		gTabs[tabId].loaded = false
-		gTabs[tabId].url = navDetails.url;
+		gTabs[tabId].url = getCleanURL(navDetails.url);
 
 		// Check tab to see if page should be blocked
 		let blocked = checkTab(tabId, true, false);
@@ -1617,8 +1675,8 @@ function handleWinFocused(winId) {
 	gFocusWindowId = winId;
 }
 
-function onInterval() {
-	//log("onInterval");
+function handleTick() {
+	//log("handleTick");
 
 	updateFocusedWindowId();
 
@@ -1635,6 +1693,18 @@ function onInterval() {
 	}
 }
 
+function onAlarm(alarmInfo) {
+	//log("onAlarm: " + alarmInfo.name);
+}
+
+async function createTicker() {
+	await browser.offscreen.createDocument({
+		url: browser.runtime.getURL("ticker.html"),
+		reasons: [ browser.offscreen.Reason.WORKERS ],
+		justification: "Ticker needs to run in offscreen document"
+	});
+}
+
 /*** STARTUP CODE BEGINS HERE ***/
 
 browser.runtime.getPlatformInfo(
@@ -1642,7 +1712,7 @@ browser.runtime.getPlatformInfo(
 );
 
 let localePath = browser.i18n.getMessage("localePath");
-browser.browserAction.setPopup({ popup: localePath + "popup.html" });
+browser.action.setPopup({ popup: localePath + "popup.html" });
 
 if (browser.contextMenus) {
 	browser.contextMenus.onClicked.addListener(handleMenuClick);
@@ -1661,4 +1731,15 @@ if (browser.windows) {
 	//browser.windows.onFocusChanged.addListener(handleWinFocused);
 }
 
-window.setInterval(onInterval, TICK_TIME);
+createTicker();
+
+// Use alarms to keep background script alive and ticker ticking...
+let now = Date.now();
+for (let alarm = 1; alarm <= 6; alarm++) {
+	let alarmInfo = {
+		when: now + (alarm * 10000),
+		periodInMinutes: 1
+	};
+	browser.alarms.create(`Alarm${alarm}`, alarmInfo);
+}
+browser.alarms.onAlarm.addListener(onAlarm);
