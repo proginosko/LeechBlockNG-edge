@@ -45,6 +45,7 @@ const PER_SET_OPTIONS = {
 	closeTab: { type: "boolean", def: false, id: "closeTab" },
 	activeBlock: { type: "boolean", def: false, id: "activeBlock" },
 	countFocus: { type: "boolean", def: true, id: "countFocus" },
+	countAudio: { type: "boolean", def: false, id: "countAudio" },
 	showKeyword: { type: "boolean", def: true, id: "showKeyword" },
 	delayFirst: { type: "boolean", def: true, id: "delayFirst" },
 	delaySecs: { type: "string", def: "60", id: "delaySecs" },
@@ -58,10 +59,12 @@ const PER_SET_OPTIONS = {
 	prevGenOpts: { type: "boolean", def: false, id: "prevGenOpts" },
 	prevExts: { type: "boolean", def: false, id: "prevExts" },
 	prevSettings: { type: "boolean", def: false, id: "prevSettings" },
+	prevOverride: { type: "boolean", def: false, id: "prevOverride" },
 	disable: { type: "boolean", def: false, id: "disable" },
 	showTimer: { type: "boolean", def: true, id: "showTimer" },
 	allowRefers: { type: "boolean", def: false, id: "allowRefers" },
 	allowKeywords: { type: "boolean", def: false, id: "allowKeywords" },
+	waitSecs: { type: "string", def: "", id: "waitSecs" },
 	sitesURL: { type: "string", def: "", id: "sitesURL" },
 	regexpBlock: { type: "string", def: "", id: "regexpBlock" },
 	regexpAllow: { type: "string", def: "", id: "regexpAllow" },
@@ -70,6 +73,7 @@ const PER_SET_OPTIONS = {
 
 const GENERAL_OPTIONS = {
 	// def: default value, id: form element identifier (see options.html)
+	simplified: { type: "boolean", def: true, id: null }, // default: show simplified options
 	numSets: { type: "string", def: "6", id: "numSets" }, // default: 6 block sets
 	sync: { type: "boolean", def: false, id: "syncStorage" }, // default: use local storage
 	theme: { type: "string", def: "", id: "theme" }, // default: light theme

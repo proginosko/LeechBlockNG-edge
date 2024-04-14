@@ -45,7 +45,9 @@ function initTab(id) {
 			referrer: "",
 			url: "about:blank",
 			incog: false,
-			loaded: false
+			audible: false,
+			loaded: false,
+			loadedTime: 0
 		};
 		return true;
 	}
@@ -264,8 +266,7 @@ function loadSiteLists() {
 
 	function onLoad(set, sites) {
 		if (set && sites) {
-			sites = sites.replace(/\s+/g, " ").replace(/(^ +)|( +$)|(\w+:\/+)/g, "");
-			sites = sites.split(" ").sort().join(" "); // sort alphabetically
+			sites = cleanSites(sites);
 
 			// Get regular expressions to match sites
 			let regexps = getRegExpSites(sites, gOptions["matchSubdomains"]);
@@ -418,12 +419,15 @@ function processTabs(active) {
 
 			let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId);
 
+			gTabs[tab.id].audible = tab.audible;
+
 			// Force update of time spent on this page
 			clockPageTime(tab.id, false, false);
 			clockPageTime(tab.id, true, focus);
 
 			if (/^(chrome|edge|extension|read)/i.test(tab.url)) {
 				gTabs[tab.id].loaded = true;
+				gTabs[tab.id].loadedTime = Date.now();
 				gTabs[tab.id].url = getCleanURL(tab.url);
 			}
 
@@ -517,6 +521,14 @@ function checkTab(id, isBeforeNav, isRepeat) {
 		let incog = gTabs[id].incog;
 		if ((incogMode == 1 && incog) || (incogMode == 2 && !incog)) continue;
 
+		// Check for wait time (if specified)
+		let waitSecs = gOptions[`waitSecs${set}`];
+		let loadedTime = gTabs[id].loadedTime;
+		if (waitSecs && loadedTime) {
+			let loadTime = Math.floor(loadedTime / 1000) + (clockOffset * 60);
+			if ((now - loadTime) < waitSecs) continue; // too soon to check for block!
+		}
+
 		// Get URL of page (possibly with hash part)
 		let pageURL = parsedURL.page;
 		let pageURLWithHash = parsedURL.page;
@@ -545,6 +557,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 		// Get options for preventing access to extensions/settings pages
 		let prevExts = gOptions[`prevExts${set}`];
 		let prevSettings = gOptions[`prevSettings${set}`];
+		let prevOverride = gOptions[`prevOverride${set}`];
 
 		// Test URL against block/allow regular expressions
 		if (testURL(pageURL, referrer, blockRE, allowRE, referRE, allowRefers)
@@ -617,7 +630,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let lockdown = (timedata[4] > now);
 
 			// Check override condition
-			let override = !isInternalPage && (overrideEndTime > now)
+			let override = (prevOverride || !isInternalPage) && (overrideEndTime > now)
 					&& allowOverride && (allowOverLock || !lockdown);
 
 			// Determine whether this page should now be blocked
@@ -679,7 +692,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 						gTabs[id].keyword = keyword;
 						gTabs[id].url = blockURL; // prevent reload loop on Chrome
 
-						if (addHistory && !isInternalPage) {
+						if (!gIsAndroid && addHistory && !isInternalPage) {
 							// Add blocked page to browser history
 							browser.history.addUrl({ url: pageURLWithHash });
 						}
@@ -840,13 +853,13 @@ function clockPageTime(id, open, focus) {
 
 	// Update time data if necessary
 	if (secsOpen > 0 || secsFocus > 0) {
-		updateTimeData(gTabs[id].url, gTabs[id].referrer, secsOpen, secsFocus);
+		updateTimeData(gTabs[id].url, gTabs[id].referrer, gTabs[id].audible, secsOpen, secsFocus);
 	}
 }
 
 // Update time data for specified page
 //
-function updateTimeData(url, referrer, secsOpen, secsFocus) {
+function updateTimeData(url, referrer, audible, secsOpen, secsFocus) {
 	//log("updateTimeData: " + url + " " + secsOpen + " " + secsFocus);
 
 	// Get parsed URL for this page
@@ -866,6 +879,10 @@ function updateTimeData(url, referrer, secsOpen, secsFocus) {
 		let allowRE = gRegExps[set].allow;
 		let referRE = gRegExps[set].refer;
 		if (!blockRE && !referRE) continue; // no block for this set
+
+		// Get option for counting time only when tab is playing audio
+		let countAudio = gOptions[`countAudio${set}`];
+		if (countAudio && !audible) continue; // no audio playing
 
 		// Get option for treating referrers as allow-conditions
 		let allowRefers = gOptions[`allowRefers${set}`];
@@ -1432,9 +1449,9 @@ function addSiteToSet(url, set, includePath) {
 	}
 	let patterns = sites.split(/\s+/);
 	if (patterns.indexOf(site) < 0) {
-		// Get sorted list of sites including new one
+		// Get clean list of sites including new one
 		patterns.push(site);
-		sites = patterns.sort().join(" ").replace(/(^ +)|( +$)/g, "");
+		sites = cleanSites(patterns.join(" "));
 
 		// Get regular expressions to match sites
 		let regexps = getRegExpSites(sites, gOptions["matchSubdomains"]);
@@ -1461,6 +1478,55 @@ function addSiteToSet(url, set, includePath) {
 			}
 		});
 	}	
+}
+
+// Add list of sites to block set
+//
+function addSitesToSet(siteList, set) {
+	//log("addSitesToSet: " + set);
+
+	if (!gGotOptions || set < 1 || set > gNumSets) {
+		return;
+	}
+
+	// Get sites for this set
+	let sites = gOptions[`sites${set}`];
+
+	// Add sites if not exceptions and not already included
+	let patterns = sites.split(/\s+/);
+	for (let site of siteList.split(/\s+/)) {
+		if (site.charAt(0) != "+" && patterns.indexOf(site) < 0) {
+			patterns.push(site);
+		}
+	}
+
+	// Get clean list of sites
+	sites = cleanSites(patterns.join(" "));
+
+	// Get regular expressions to match sites
+	let regexps = getRegExpSites(sites, gOptions["matchSubdomains"]);
+
+	// Update options
+	gOptions[`sites${set}`] = sites;
+	gOptions[`blockRE${set}`] = regexps.block;
+	gOptions[`allowRE${set}`] = regexps.allow;
+	gOptions[`referRE${set}`] = regexps.refer;
+	gOptions[`keywordRE${set}`] = regexps.keyword;
+
+	createRegExps();
+
+	// Save updated options to storage
+	let options = {};
+	options[`sites${set}`] = sites;
+	options[`blockRE${set}`] = regexps.block;
+	options[`allowRE${set}`] = regexps.allow;
+	options[`referRE${set}`] = regexps.refer;
+	options[`keywordRE${set}`] = regexps.keyword;
+	gStorage.set(options, function () {
+		if (browser.runtime.lastError) {
+			warn("Cannot set options: " + browser.runtime.lastError.message);
+		}
+	});
 }
 
 /*** EVENT HANDLERS BEGIN HERE ***/
@@ -1492,6 +1558,11 @@ function handleMessage(message, sender, sendResponse) {
 
 	switch (message.type) {
 
+		case "add-sites":
+			// Add sites to block set
+			addSitesToSet(message.sites, message.set);
+			break;
+
 		case "blocked":
 			// Block info requested by blocking/delaying page
 			let info = createBlockInfo(sender.tab.id, sender.url);
@@ -1519,6 +1590,7 @@ function handleMessage(message, sender, sendResponse) {
 		case "loaded":
 			// Register that content script has been loaded
 			gTabs[sender.tab.id].loaded = true;
+			gTabs[sender.tab.id].loadedTime = Date.now();
 			gTabs[sender.tab.id].url = getCleanURL(message.url);
 			gTabs[sender.tab.id].incog = message.incog;
 			break;
