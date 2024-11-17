@@ -1,3 +1,19 @@
+# Version 1.6.6 (21 Oct 2024)
+* Added Vietnamese localization (thanks to anhkhoakz).
+* Added option to enter custom message on blocking/delaying page.
+* Added option to block about:debugging (Firefox).
+* Added option to allow access for limited time after delaying page.
+* Added option to ignore jumps in time spent (e.g., when computer goes to sleep).
+* Added export to JSON file.
+* Added options for 30/60/90-day time limit periods.
+
+# Version 1.6.5 (18 Jun 2024)
+* Added "fade (100%)" filter option.
+* Added option to disable link on blocking/delaying page.
+
+### Version 1.6.4.1 (19 May 2024)
+* Bug fix.
+
 ### Version 1.6.4 (31 Mar 2024)
 * Added buttons to show simplified/full options.
 * Added button to add sites to a block set (without going through the options page).

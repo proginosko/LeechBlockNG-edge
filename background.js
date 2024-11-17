@@ -28,6 +28,8 @@ var gRegExps = [];
 var gActiveTabId = 0;
 var gPrevActiveTabId = 0;
 var gFocusWindowId = 0;
+var gClockOffset = 0;
+var gIgnoreJumpSecs = 0;
 var gAllFocused = false;
 var gOverrideIcon = false;
 var gSaveSecsCount = 0;
@@ -42,6 +44,7 @@ function initTab(id) {
 			allowedHost: null,
 			allowedPath: null,
 			allowedSet: 0,
+			allowedEndTime: 0,
 			referrer: "",
 			url: "about:blank",
 			incog: false,
@@ -185,29 +188,17 @@ function refreshTicker() {
 function retrieveOptions(update) {
 	//log("retrieveOptions: " + update);
 
-	browser.storage.local.get("sync", onGotSync);
+	browser.storage.local.get("sync").then(onGotSync, onError);
 
 	function onGotSync(options) {
-		if (browser.runtime.lastError) {
-			gGotOptions = false;
-			warn("Cannot get options: " + browser.runtime.lastError.message);
-			return;
-		}
-
 		gStorage = options["sync"]
 				? browser.storage.sync
 				: browser.storage.local;
 
-		gStorage.get(onGot);
+		gStorage.get().then(onGot, onError);
 	}
 
 	function onGot(options) {
-		if (browser.runtime.lastError) {
-			gGotOptions = false;
-			warn("Cannot get options: " + browser.runtime.lastError.message);
-			return;
-		}
-
 		// Copy retrieved options (exclude timedata if update)
 		for (let option in options) {
 			if (!update || !/^timedata/.test(option)) {
@@ -223,6 +214,8 @@ function retrieveOptions(update) {
 
 		gNumSets = +gOptions["numSets"];
 
+		gClockOffset = +gOptions["clockOffset"];
+		gIgnoreJumpSecs = +gOptions["ignoreJumpSecs"];
 		gAllFocused = gOptions["allFocused"];
 
 		createRegExps();
@@ -235,6 +228,11 @@ function retrieveOptions(update) {
 		for (let set = 1; set <= gNumSets; set++) {
 			gSavedTimeData[set] = gOptions[`timedata${set}`].toString();
 		}
+	}
+
+	function onError(error) {
+		gGotOptions = false;
+		warn("Cannot get options: " + error);
 	}
 }
 
@@ -287,11 +285,9 @@ function loadSiteLists() {
 			options[`allowRE${set}`] = regexps.allow;
 			options[`referRE${set}`] = regexps.refer;
 			options[`keywordRE${set}`] = regexps.keyword;
-			gStorage.set(options, function () {
-				if (browser.runtime.lastError) {
-					warn("Cannot set options: " + browser.runtime.lastError.message);
-				}
-			});
+			gStorage.set(options).catch(
+				function (error) { warn("Cannot set options: " + error); }
+			);
 		}
 	}
 }
@@ -316,11 +312,9 @@ function saveTimeData() {
 		}
 	}
 	if (touched) {
-		gStorage.set(options, function () {
-			if (browser.runtime.lastError) {
-				warn("Cannot save time data: " + browser.runtime.lastError.message);
-			}
-		});
+		gStorage.set(options).catch(
+			function (error) { warn("Cannot save time data: " + error); }
+		);
 	}
 }
 
@@ -334,8 +328,7 @@ function restartTimeData(set) {
 	}
 
 	// Get current time in seconds
-	let clockOffset = gOptions["clockOffset"];
-	let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+	let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
 
 	if (!set) {
 		for (set = 1; set <= gNumSets; set++) {
@@ -382,13 +375,12 @@ function updateFocusedWindowId() {
 		return; // no support for windows!
 	}
 
-	browser.windows.getCurrent(
+	browser.windows.getCurrent().then(
 		function (win) {
-			if (browser.runtime.lastError) {
-				warn("Cannot get current window: " + browser.runtime.lastError.message);
-			} else {
-				gFocusWindowId = win.focused ? win.id : browser.windows.WINDOW_ID_NONE;
-			}
+			gFocusWindowId = win.focused ? win.id : browser.windows.WINDOW_ID_NONE;
+		},
+		function (error) {
+			warn("Cannot get current window: " + error);
 		}
 	);
 }
@@ -402,23 +394,19 @@ function processTabs(active) {
 
 	if (active) {
 		// Process only active tabs
-		browser.tabs.query({ active: true }, onGot);
+		browser.tabs.query({ active: true }).then(onGot, onError);
 	} else {
 		// Process all tabs
-		browser.tabs.query({}, onGot);
+		browser.tabs.query({}).then(onGot, onError);
 	}
 
 	function onGot(tabs) {
-		if (browser.runtime.lastError) {
-			warn("Cannot get tabs: " + browser.runtime.lastError.message);
-			return;
-		}
-
 		for (let tab of tabs) {
 			initTab(tab.id);
 
 			let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId);
 
+			gTabs[tab.id].incog = tab.incognito;
 			gTabs[tab.id].audible = tab.audible;
 
 			// Force update of time spent on this page
@@ -441,9 +429,13 @@ function processTabs(active) {
 			} else if (CLOCKABLE_URL.test(tab.url)) {
 				// Ping tab to see if content script has loaded
 				let message = { type: "ping" };
-				browser.tabs.sendMessage(tab.id, message);
+				browser.tabs.sendMessage(tab.id, message).catch(function (error) {});
 			}
 		}
+	}
+
+	function onError(error) {
+		warn("Cannot get tabs: " + error);
 	}
 }
 
@@ -479,23 +471,24 @@ function checkTab(id, isBeforeNav, isRepeat) {
 	// Get parsed URL for this page
 	let parsedURL = getParsedURL(url);
 
-	// Check for allowed host/path
+	// Get current time in seconds
+	let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
+
+	// Check for allowed host/path (or end of allowed time)
 	let allowHost = isSameHost(gTabs[id].allowedHost, parsedURL.host);
 	let allowPath = !gTabs[id].allowedPath || (gTabs[id].allowedPath == parsedURL.path);
-	let allowSet = gTabs[id].allowedSet;
-	if (!allowHost || !allowPath) {
+	let allowedSet = gTabs[id].allowedSet;
+	let allowedEndTime = gTabs[id].allowedEndTime;
+	if (!allowHost || !allowPath || (allowedEndTime && now > allowedEndTime)) {
 		// Allowing delayed site/page no longer applies
 		gTabs[id].allowedHost = null;
 		gTabs[id].allowedPath = null;
 		gTabs[id].allowedSet = 0;
+		gTabs[id].allowedEndTime = 0;
 	}
 
 	// Get referrer URL for this page
 	let referrer = gTabs[id].referrer;
-
-	// Get current time in seconds
-	let clockOffset = gOptions["clockOffset"];
-	let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
 
 	// Get current time/date
 	let timedate = new Date(now * 1000);
@@ -511,8 +504,14 @@ function checkTab(id, isBeforeNav, isRepeat) {
 		// Do nothing if set is disabled
 		if (gOptions[`disable${set}`]) continue;
 
-		if (allowHost && allowPath && allowSet == set) {
+		if (allowHost && allowPath && allowedSet == set) {
 			// Allow delayed site/page
+			let secsLeft = allowedEndTime - now;
+			if (secsLeft > 0) {
+				gTabs[id].secsLeft = secsLeft;
+				gTabs[id].secsLeftSet = set;
+				gTabs[id].showTimer = gOptions[`showTimer${set}`];
+			}
 			continue;
 		}
 
@@ -525,7 +524,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 		let waitSecs = gOptions[`waitSecs${set}`];
 		let loadedTime = gTabs[id].loadedTime;
 		if (waitSecs && loadedTime) {
-			let loadTime = Math.floor(loadedTime / 1000) + (clockOffset * 60);
+			let loadTime = Math.floor(loadedTime / 1000) + (gClockOffset * 60);
 			if ((now - loadTime) < waitSecs) continue; // too soon to check for block!
 		}
 
@@ -687,7 +686,9 @@ function checkTab(id, isBeforeNav, isRepeat) {
 							type: "filter",
 							name: filterName
 						};
-						browser.tabs.sendMessage(id, message);
+						browser.tabs.sendMessage(id, message).catch(
+							function (error) {}
+						);
 					} else {
 						gTabs[id].keyword = keyword;
 						gTabs[id].url = blockURL; // prevent reload loop on Chrome
@@ -714,13 +715,14 @@ function checkTab(id, isBeforeNav, isRepeat) {
 						type: "keyword",
 						keywordRE: keywordRE
 					};
-					browser.tabs.sendMessage(id, message,
+					browser.tabs.sendMessage(id, message).then(
 						function (keyword) {
 							if ((!allowKeywords && typeof keyword == "string")
 									|| (allowKeywords && keyword == null)) {
 								applyBlock(keyword);
 							}
-						}
+						},
+						function (error) {}
 					);
 				} else {
 					applyBlock();
@@ -742,7 +744,9 @@ function checkTab(id, isBeforeNav, isRepeat) {
 					type: "filter",
 					name: null
 				};
-				browser.tabs.sendMessage(id, message);
+				browser.tabs.sendMessage(id, message).catch(
+					function (error) {}
+				);
 			}
 
 			// Update seconds left before block
@@ -794,11 +798,9 @@ function checkWarning(id) {
 				type: "alert",
 				text: text
 			};
-			browser.tabs.sendMessage(id, message, function () {
-				if (browser.runtime.lastError) {
-					gTabs[id].warned = false;
-				}
-			});
+			browser.tabs.sendMessage(id, message).catch(
+				function (error) { gTabs[id].warned = false; }
+			);
 		}
 	}
 }
@@ -867,8 +869,7 @@ function updateTimeData(url, referrer, audible, secsOpen, secsFocus) {
 	let pageURL = parsedURL.page;
 
 	// Get current time in seconds
-	let clockOffset = gOptions["clockOffset"];
-	let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+	let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
 
 	// Get current time/date
 	let timedate = new Date(now * 1000);
@@ -920,6 +921,8 @@ function updateTimeData(url, referrer, audible, secsOpen, secsFocus) {
 
 			// Get number of seconds spent on page (focused or open)
 			let secsSpent = countFocus ? secsFocus : secsOpen;
+
+			if (gIgnoreJumpSecs && secsSpent > gIgnoreJumpSecs) continue;
 
 			// Update data for total time spent
 			timedata[1] = +timedata[1] + secsSpent;
@@ -985,7 +988,7 @@ function updateTimer(id) {
 	} else {
 		message.text = formatTime(secsLeft); // show timer with time left
 	}
-	browser.tabs.sendMessage(id, message);
+	browser.tabs.sendMessage(id, message).catch(function (error) {});
 
 	// Set tooltip
 	if (!gIsAndroid) {
@@ -1017,8 +1020,7 @@ function updateIcon() {
 	}
 
 	// Get current time in seconds
-	let clockOffset = gOptions["clockOffset"];
-	let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+	let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
 
 	// Get override end time
 	let overrideEndTime = gOptions["oret"];
@@ -1056,15 +1058,20 @@ function createBlockInfo(id, url) {
 		blockedURL += "#" + parsedURL.hash;
 	}
 
+	// Get disable link option
+	let disableLink = gOptions["disableLink"];
+
 	// Get keyword match (if applicable)
 	let keywordMatch = gOptions[`showKeyword${blockedSet}`] ? gTabs[id].keyword : null;
+
+	// Get custom message
+	let customMsg = gOptions[`customMsg${blockedSet}`];
 
 	// Get unblock time for block set
 	let unblockTime = getUnblockTime(blockedSet);
 	if (unblockTime != null) {
 		// Get current date of the month
-		let clockOffset = gOptions["clockOffset"];
-		let date = new Date(Date.now() + (clockOffset * 60000)).getDate();
+		let date = new Date(Date.now() + (gClockOffset * 60000)).getDate();
 
 		// Get clock time format
 		let clockTimeOpts = {};
@@ -1095,7 +1102,9 @@ function createBlockInfo(id, url) {
 		blockedSet: blockedSet,
 		blockedSetName: blockedSetName,
 		blockedURL: blockedURL,
+		disableLink: disableLink,
 		keywordMatch: keywordMatch,
+		customMsg: customMsg,
 		unblockTime: unblockTime,
 		delaySecs: delaySecs,
 		delayCancel: delayCancel,
@@ -1113,8 +1122,7 @@ function getUnblockTime(set) {
 	}
 
 	// Get current time in seconds
-	let clockOffset = gOptions["clockOffset"];
-	let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+	let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
 
 	// Get current time/date
 	let timedate = new Date(now * 1000);
@@ -1301,8 +1309,7 @@ function applyOverride(endTime) {
 
 	if (endTime) {
 		// Get current time in seconds
-		let clockOffset = gOptions["clockOffset"];
-		let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+		let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
 
 		// Update override limit count (if specified)
 		let orln = gOptions["orln"];
@@ -1328,11 +1335,9 @@ function applyOverride(endTime) {
 	}
 
 	// Save updated options to storage
-	gStorage.set(options, function () {
-		if (browser.runtime.lastError) {
-			warn("Cannot set options: " + browser.runtime.lastError.message);
-		}
-	});
+	gStorage.set(options).catch(
+		function (error) { warn("Cannot set options: " + error); }
+	);
 
 	updateIcon();
 }
@@ -1381,7 +1386,7 @@ function discardRemainingTime() {
 function openExtensionPage(url) {
 	let fullURL = browser.runtime.getURL(url);
 
-	browser.tabs.query({ url: fullURL }, onGot);
+	browser.tabs.query({ url: fullURL }).then(onGot, onError);
 
 	function onGot(tabs) {
 		if (tabs.length > 0) {
@@ -1389,6 +1394,10 @@ function openExtensionPage(url) {
 		} else {
 			browser.tabs.create({ url: fullURL });
 		}
+	}
+
+	function onError(error) {
+		browser.tabs.create({ url: fullURL });
 	}
 }
 
@@ -1405,9 +1414,19 @@ function openDelayedPage(id, url, set, autoLoad) {
 	let parsedURL = getParsedURL(url);
 
 	// Set parameters for allowing host
+	let delayFirst = gOptions[`delayFirst${set}`];
+	let delayAllowMins = gOptions[`delayAllowMins${set}`];
 	gTabs[id].allowedHost = parsedURL.host;
-	gTabs[id].allowedPath = gOptions[`delayFirst${set}`] ? null : parsedURL.path;
+	gTabs[id].allowedPath = delayFirst ? null : parsedURL.path;
 	gTabs[id].allowedSet = set;
+	if (delayAllowMins) {
+		// Calculate end time for allowing access
+		let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
+		gTabs[id].allowedEndTime = now + (delayAllowMins * 60);
+	} else {
+		// No end time for allowing access
+		gTabs[id].allowedEndTime = 0;
+	}
 
 	if (autoLoad) {
 		// Redirect page
@@ -1472,11 +1491,9 @@ function addSiteToSet(url, set, includePath) {
 		options[`allowRE${set}`] = regexps.allow;
 		options[`referRE${set}`] = regexps.refer;
 		options[`keywordRE${set}`] = regexps.keyword;
-		gStorage.set(options, function () {
-			if (browser.runtime.lastError) {
-				warn("Cannot set options: " + browser.runtime.lastError.message);
-			}
-		});
+		gStorage.set(options).catch(
+			function (error) { warn("Cannot set options: " + error); }
+		);
 	}	
 }
 
@@ -1522,11 +1539,9 @@ function addSitesToSet(siteList, set) {
 	options[`allowRE${set}`] = regexps.allow;
 	options[`referRE${set}`] = regexps.refer;
 	options[`keywordRE${set}`] = regexps.keyword;
-	gStorage.set(options, function () {
-		if (browser.runtime.lastError) {
-			warn("Cannot set options: " + browser.runtime.lastError.message);
-		}
-	});
+	gStorage.set(options).catch(
+		function (error) { warn("Cannot set options: " + error); }
+	);
 }
 
 /*** EVENT HANDLERS BEGIN HERE ***/
@@ -1551,6 +1566,11 @@ function handleMenuClick(info, tab) {
 function handleMessage(message, sender, sendResponse) {
 	if (!sender) {
 		warn("No sender!");
+		return;
+	}
+
+	if (sender.documentLifecycle === "prerender") {
+		// Ignore prerendered pages
 		return;
 	}
 
@@ -1592,7 +1612,6 @@ function handleMessage(message, sender, sendResponse) {
 			gTabs[sender.tab.id].loaded = true;
 			gTabs[sender.tab.id].loadedTime = Date.now();
 			gTabs[sender.tab.id].url = getCleanURL(message.url);
-			gTabs[sender.tab.id].incog = message.incog;
 			break;
 
 		case "lockdown":
@@ -1650,6 +1669,7 @@ function handleTabCreated(tab) {
 		gTabs[tab.id].allowedHost = gTabs[tab.openerTabId].allowedHost;
 		gTabs[tab.id].allowedPath = gTabs[tab.openerTabId].allowedPath;
 		gTabs[tab.id].allowedSet = gTabs[tab.openerTabId].allowedSet;
+		gTabs[tab.id].allowedEndTime = gTabs[tab.openerTabId].allowedEndTime;
 	}
 }
 
@@ -1779,7 +1799,7 @@ async function createTicker() {
 
 /*** STARTUP CODE BEGINS HERE ***/
 
-browser.runtime.getPlatformInfo(
+browser.runtime.getPlatformInfo().then(
 	function (info) { gIsAndroid = (info.os == "android"); }
 );
 

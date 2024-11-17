@@ -19,10 +19,8 @@ var gAlert;
 // Notify background script that page has loaded
 //
 function notifyLoaded() {
-	let incog = browser.extension.inIncognitoContext;
-
 	// Register that this script has now loaded
-	browser.runtime.sendMessage({ type: "loaded", url: document.URL, incog: incog });
+	browser.runtime.sendMessage({ type: "loaded", url: document.URL });
 
 	// Send URL of referring page to background script
 	browser.runtime.sendMessage({ type: "referrer", referrer: document.referrer });
@@ -139,6 +137,7 @@ function applyFilter(name) {
 		"blur (32px)": "blur(32px)",
 		"fade (80%)": "opacity(20%)",
 		"fade (90%)": "opacity(10%)",
+		"fade (100%)": "opacity(0%)",
 		"grayscale": "grayscale(100%)",
 		"invert": "invert(100%)",
 		"sepia": "sepia(100%)"

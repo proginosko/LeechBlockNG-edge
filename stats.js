@@ -11,6 +11,7 @@ function getElement(id) { return document.getElementById(id); }
 
 var gFormHTML;
 var gNumSets;
+var gClockOffset;
 var gClockTimeOpts;
 
 // Initialize form (with specified number of block sets)
@@ -42,27 +43,17 @@ function refreshPage() {
 
 	$("#form").hide();
 
-	browser.storage.local.get("sync", onGotSync);
+	browser.storage.local.get("sync").then(onGotSync, onError);
 
 	function onGotSync(options) {
-		if (browser.runtime.lastError) {
-			warn("Cannot get options: " + browser.runtime.lastError.message);
-			return;
-		}
-
 		if (options["sync"]) {
-			browser.storage.sync.get(onGot);
+			browser.storage.sync.get().then(onGot, onError);
 		} else {
-			browser.storage.local.get(onGot);
+			browser.storage.local.get().then(onGot, onError);
 		}
 	}
 
 	function onGot(options) {
-		if (browser.runtime.lastError) {
-			warn("Cannot get options: " + browser.runtime.lastError.message);
-			return;
-		}
-
 		cleanOptions(options);
 		cleanTimeData(options);
 
@@ -79,8 +70,8 @@ function refreshPage() {
 		}
 
 		// Get current time in seconds
-		let clockOffset = options["clockOffset"];
-		let now = Math.floor(Date.now() / 1000) + (clockOffset * 60);
+		gClockOffset = options["clockOffset"];
+		let now = Math.floor(Date.now() / 1000) + (gClockOffset * 60);
 
 		for (let set = 1; set <= gNumSets; set++) {
 			let setName = options[`setName${set}`];
@@ -125,6 +116,10 @@ function refreshPage() {
 
 		$("#form").show();
 	}
+
+	function onError(error) {
+		warn("Cannot get options: " + error);
+	}
 }
 
 // Return formatted times based on time data
@@ -156,11 +151,11 @@ function handleClick(e) {
 	if (id == "restartAll") {
 		// Request restart time data for all sets
 		let message = { type: "restart", set: 0 };
-		browser.runtime.sendMessage(message, refreshPage);
+		browser.runtime.sendMessage(message).then(refreshPage);
 	} else if (/restart\d+/.test(id)) {
 		// Request restart time data for specific set
 		let message = { type: "restart", set: +id.substr(7) };
-		browser.runtime.sendMessage(message, refreshPage);
+		browser.runtime.sendMessage(message).then(refreshPage);
 	}
 }
 

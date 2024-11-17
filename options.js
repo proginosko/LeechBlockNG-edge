@@ -5,6 +5,7 @@
 const browser = chrome;
 
 const DEFAULT_OPTIONS_FILE = "LeechBlockOptions.txt";
+const DEFAULT_JSON_FILE = "LeechBlockOptions.json";
 
 const SUB_OPTIONS = {
 	"applyFilter" : [ "filterName", "filterMute" ],
@@ -127,6 +128,7 @@ function initForm(numSets) {
 	$("#clockOffsetTime").click(showClockOffsetTime);
 	$("#exportOptions").click(exportOptions);
 	$("#importOptions").click(importOptions);
+	$("#exportOptionsJSON").click(exportOptionsJSON);
 	$("#exportOptionsSync").click(exportOptionsSync);
 	$("#importOptionsSync").click(importOptionsSync);
 	$("#openDiagnostics").click(openDiagnostics);
@@ -139,6 +141,8 @@ function initForm(numSets) {
 		// Hide sync options (sync storage not supported on Android yet)
 		getElement("syncOpts1").style.display = "none";
 		getElement("syncOpts2").style.display = "none";
+		// Disable export to JSON button
+		getElement("exportOptionsJSON").disabled = true;
 	}
 
 	// Set active tab
@@ -216,6 +220,7 @@ function saveOptions(event) {
 		let limitMins = $(`#limitMins${set}`).val();
 		let limitOffset = $(`#limitOffset${set}`).val();
 		let delaySecs = $(`#delaySecs${set}`).val();
+		let delayAllowMins = $(`#delayAllowMins${set}`).val();
 		let reloadSecs = $(`#reloadSecs${set}`).val();
 		let waitSecs = $(`#waitSecs${set}`).val();
 		let blockURL = $(`#blockURL${set}`).val();
@@ -243,6 +248,12 @@ function saveOptions(event) {
 			$("#tabs").tabs("option", "active", (set - 1));
 			$(`#delaySecs${set}`).focus();
 			$("#alertBadSeconds").dialog("open");
+			return false;
+		}
+		if (!checkPosIntFormat(delayAllowMins)) {
+			$("#tabs").tabs("option", "active", (set - 1));
+			$(`#delayAllowMins${set}`).focus();
+			$("#alertBadMinutes").dialog("open");
 			return false;
 		}
 		if (!checkPosIntFormat(reloadSecs)) {
@@ -320,6 +331,13 @@ function saveOptions(event) {
 		$("#tabs").tabs("option", "active", gNumSets);
 		$("#clockOffset").focus();
 		$("#alertBadClockOffset").dialog("open");
+		return false;
+	}
+	let ignoreJumpSecs = $("#ignoreJumpSecs").val();
+	if (!checkPosIntFormat(ignoreJumpSecs)) {
+		$("#tabs").tabs("option", "active", gNumSets);
+		$("#ignoreJumpSecs").focus();
+		$("#alertBadSeconds").dialog("open");
 		return false;
 	}
 
@@ -405,14 +423,13 @@ function saveOptions(event) {
 	if (options["sync"]) {
 		// Set sync option in local storage and all options in sync storage
 		browser.storage.local.set({ sync: true });
-		browser.storage.sync.set(options, function () {
-			if (browser.runtime.lastError) {
-				warn("Cannot set options: " + browser.runtime.lastError.message);
-			} else {
+		browser.storage.sync.set(options).then(
+			function () {
 				browser.runtime.sendMessage(message);
 				$("#form").hide({ effect: "fade", complete: complete });
-			}
-		});
+			},
+			function (error) { warn("Cannot set options: " + error); }
+		);
 	} else {
 		// Export options to sync storage if selected
 		if (options["autoExportSync"] && !gIsAndroid) {
@@ -420,14 +437,13 @@ function saveOptions(event) {
 		}
 
 		// Set all options in local storage
-		browser.storage.local.set(options, function () {
-			if (browser.runtime.lastError) {
-				warn("Cannot set options: " + browser.runtime.lastError.message);
-			} else {
+		browser.storage.local.set(options).then(
+			function () {
 				browser.runtime.sendMessage(message);
 				$("#form").hide({ effect: "fade", complete: complete });
-			}
-		});
+			},
+			function (error) { warn("Cannot set options: " + error); }
+		);
 	}
 
 	return true;
@@ -445,31 +461,19 @@ function closeOptions() {
 function retrieveOptions() {
 	//log("retrieveOptions");
 
-	browser.storage.local.get("sync", onGotSync);
+	browser.storage.local.get("sync").then(onGotSync, onError);
 
 	function onGotSync(options) {
-		if (browser.runtime.lastError) {
-			warn("Cannot get options: " + browser.runtime.lastError.message);
-			$("#alertRetrieveError").dialog("open");
-			return;
-		}
-
 		if(options["sync"]) {
 			// Get all options from sync storage
-			browser.storage.sync.get(onGot);
+			browser.storage.sync.get().then(onGot, onError);
 		} else {
 			// Get all options from local storage
-			browser.storage.local.get(onGot);
+			browser.storage.local.get().then(onGot, onError);
 		}
 	}
 
 	function onGot(options) {
-		if (browser.runtime.lastError) {
-			warn("Cannot get options: " + browser.runtime.lastError.message);
-			$("#alertRetrieveError").dialog("open");
-			return;
-		}
-
 		cleanOptions(options);
 		cleanTimeData(options);
 
@@ -626,6 +630,11 @@ function retrieveOptions() {
 		updateMoveSetButtons();
 
 		confirmAccess(options);
+	}
+
+	function onError(error) {
+		warn("Cannot get options: " + error);
+		$("#alertRetrieveError").dialog("open");
 	}
 }
 
@@ -851,7 +860,7 @@ function applyImportOptions(options) {
 	}
 }
 
-// Export options to file
+// Export options to text file
 //
 function exportOptions() {
 	let exportPasswords = getElement("exportPasswords").checked;
@@ -886,21 +895,20 @@ function exportOptions() {
 			filename: DEFAULT_OPTIONS_FILE,
 			saveAs: true
 		};
-		browser.downloads.download(downloadOptions, onDownloaded);
+		browser.downloads.download(downloadOptions).then(onSuccess, onError);
 	}
-	
-	function onDownloaded() {
-		if (browser.runtime.lastError) {
-			warn("Cannot download options: " + browser.runtime.lastError.message);
-			$("#alertExportError").dialog("open");
-			return;
-		}
 
+	function onSuccess() {
 		$("#alertExportSuccess").dialog("open");
+	}
+
+	function onError(error) {
+		warn("Cannot download options: " + error);
+		$("#alertExportError").dialog("open");
 	}
 }
 
-// Import options from file
+// Import options from text file
 //
 function importOptions() {
 	let file = getElement("importFile").files[0];
@@ -963,48 +971,76 @@ function importOptions() {
 	}
 }
 
+// Export options to JSON file
+//
+function exportOptionsJSON() {
+	let exportPasswords = getElement("exportPasswords").checked;
+
+	let options = compileExportOptions(exportPasswords);
+
+	// Convert options to JSON string
+	let json = JSON.stringify(options);
+
+	// Create blob and download it
+	let blob = new Blob([json], { type: "application/json", endings: "native" });
+	let url = URL.createObjectURL(blob);
+	let downloadOptions = {
+		url: url,
+		filename: DEFAULT_JSON_FILE,
+		saveAs: true
+	};
+	browser.downloads.download(downloadOptions).then(onSuccess, onError);
+
+	function onSuccess() {
+		$("#alertExportSuccess").dialog("open");
+	}
+
+	function onError(error) {
+		warn("Cannot download options: " + error);
+		$("#alertExportError").dialog("open");
+	}
+}
+
 // Export options to sync storage
 //
 function exportOptionsSync(event) {
 	let options = compileExportOptions(true);
 
-	browser.storage.sync.set(options, onExported);
+	browser.storage.sync.set(options).then(onSuccess, onError);
 
-	function onExported() {
-		if (browser.runtime.lastError) {
-			warn("Cannot export options to sync storage: " + browser.runtime.lastError.message);
-			if (event) {
-				$("#alertExportSyncError").dialog("open");
-			}
-			return;
-		}
-
+	function onSuccess() {
 		if (event) {
 			$("#alertExportSuccess").dialog("open");
 		}
 	}
+
+	function onError(error) {
+		warn("Cannot export options to sync storage: " + error);
+		if (event) {
+			$("#alertExportSyncError").dialog("open");
+		}
+	};
 }
 
 // Import options from sync storage
 //
 function importOptionsSync(event) {
-	browser.storage.sync.get(onImported);
+	browser.storage.sync.get().then(onGot, onError);
 
-	function onImported(options) {
-		if (browser.runtime.lastError) {
-			warn("Cannot import options from sync storage: " + browser.runtime.lastError.message);
-			if (event) {
-				$("#alertImportSyncError").dialog("open");
-			}
-			return;
-		}
-
+	function onGot(options) {
 		cleanOptions(options);
 		applyImportOptions(options);
 
 		if (event) {
 			$("#tabs").tabs("option", "active", gNumSets);
 			$("#alertImportSuccess").dialog("open");
+		}
+	}
+
+	function onError(error) {
+		warn("Cannot import options from sync storage: " + error);
+		if (event) {
+			$("#alertImportSyncError").dialog("open");
 		}
 	}
 }
@@ -1247,7 +1283,7 @@ function handleKeyDown(event) {
 
 /*** STARTUP CODE BEGINS HERE ***/
 
-browser.runtime.getPlatformInfo(
+browser.runtime.getPlatformInfo().then(
 	function (info) { gIsAndroid = (info.os == "android"); }
 );
 
