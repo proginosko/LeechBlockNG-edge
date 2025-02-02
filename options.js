@@ -19,6 +19,9 @@ function getElement(id) { return document.getElementById(id); }
 
 function isTrue(str) { return /^true$/i.test(str); }
 
+function escape(str) { return str.replace(/\n/g, "\\n"); }
+function unescape(str) { return str.replace(/\\n/g, "\n"); }
+
 var gIsAndroid = false;
 var gAccessConfirmed = false;
 var gAccessRequiredInput;
@@ -121,7 +124,6 @@ function initForm(numSets) {
 	$("#simpOptsGen").click(function (e) { showSimplifiedOptions(true); });
 	$("#fullOptsGen").click(function (e) { showSimplifiedOptions(false); });
 	$("#accessPasswordShow").change(accessPasswordShow);
-	$("#overridePasswordShow").change(overridePasswordShow);
 	$("#theme").change(function (e) { setTheme($("#theme").val()); });
 	$("#clockOffset").click(showClockOffsetTime);
 	$("#clockOffset").keyup(showClockOffsetTime);
@@ -730,14 +732,6 @@ function accessPasswordShow() {
 	input.type = checkbox.checked ? "text" : "password";
 }
 
-// Show/hide override password
-//
-function overridePasswordShow() {
-	let input = getElement("overridePassword");
-	let checkbox = getElement("overridePasswordShow");
-	input.type = checkbox.checked ? "text" : "password";
-}
-
 // Show adjusted time based on clock offset
 //
 function showClockOffsetTime() {
@@ -774,7 +768,7 @@ function compileExportOptions(passwords) {
 			} else if (type == "boolean") {
 				options[`${name}${set}`] = getElement(`${id}${set}`).checked;
 			} else if (type == "string") {
-				options[`${name}${set}`] = getElement(`${id}${set}`).value;
+				options[`${name}${set}`] = escape(getElement(`${id}${set}`).value);
 			} else if (type == "array") {
 				let val = PER_SET_OPTIONS[name].def.slice();
 				for (let i = 0; i < val.length; i++) {
@@ -794,7 +788,7 @@ function compileExportOptions(passwords) {
 			if (type == "boolean") {
 				options[name] = getElement(id).checked;
 			} else if (type == "string") {
-				options[name] = getElement(id).value;
+				options[name] = escape(getElement(id).value);
 			}
 		}
 	}
@@ -824,7 +818,7 @@ function applyImportOptions(options) {
 				} else if (type == "boolean") {
 					getElement(`${id}${set}`).checked = val;
 				} else if (type == "string") {
-					getElement(`${id}${set}`).value = val;
+					getElement(`${id}${set}`).value = unescape(val);;
 				} else if (type == "array") {
 					for (let i = 0; i < val.length; i++) {
 						getElement(`${id}${i}${set}`).checked = val[i];
@@ -854,7 +848,7 @@ function applyImportOptions(options) {
 			if (type == "boolean") {
 				getElement(id).checked = options[name];
 			} else if (type == "string") {
-				getElement(id).value = options[name];
+				getElement(id).value = unescape(options[name]);
 			}
 		}
 	}
@@ -1179,8 +1173,9 @@ function disableGeneralOptions() {
 
 	// Disable other items
 	let items = [
-		"accessPasswordShow", "overridePasswordShow",
+		"accessPasswordShow",
 		"exportOptions", "importOptions", "importFile",
+		"exportOptionsJSON",
 		"exportOptionsSync", "importOptionsSync"
 	];
 	for (let item of items) {

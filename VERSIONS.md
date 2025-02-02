@@ -1,3 +1,16 @@
+# Version 1.6.8.2 (26 Jan 2025)
+* Fixed issue with counting time on active tab (Android).
+* Fixed issue with export/import of multiline strings.
+* Closed some escape hatches.
+
+# Version 1.6.8 (09 Jan 2025)
+* Added option for custom style (CSS) for blocking/delaying page.
+* Bug fixes.
+
+# Version 1.6.7 (22 Dec 2024)
+* Added support for keyboard shortcuts.
+* Bug fixes and under-the-hood improvements.
+
 # Version 1.6.6 (21 Oct 2024)
 * Added Vietnamese localization (thanks to anhkhoakz).
 * Added option to enter custom message on blocking/delaying page.

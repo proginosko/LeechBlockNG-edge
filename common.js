@@ -79,6 +79,7 @@ const GENERAL_OPTIONS = {
 	numSets: { type: "string", def: "6", id: "numSets" }, // default: 6 block sets
 	sync: { type: "boolean", def: false, id: "syncStorage" }, // default: use local storage
 	theme: { type: "string", def: "", id: "theme" }, // default: light theme
+	customStyle: { type: "string", def: "", id: "customStyle" }, // default: no custom style
 	oa: { type: "string", def: "0", id: "optionsAccess" }, // default: no password or code
 	password: { type: "string", def: "", id: "accessPassword" }, // default: blank
 	hpp: { type: "boolean", def: true, id: "hidePassword" }, // default: hidden
@@ -107,6 +108,7 @@ const GENERAL_OPTIONS = {
 	clockOffset: { type: "string", def: "", id: "clockOffset" }, // default: no offset
 	ignoreJumpSecs: { type: "string", def: "", id: "ignoreJumpSecs" }, // default: do not ignore time jumps
 	allFocused: { type: "boolean", def: false, id: "allFocused" }, // default: disabled
+	useDocFocus: { type: "boolean", def: true, id: "useDocFocus" }, // default: enabled
 	processTabsSecs: { type: "string", def: "1", id: "processTabsSecs" }, // default: every second
 	processActiveTabs: { type: "boolean", def: false, id: "processActiveTabs" }, // default: disabled
 	accessCodeImage: { type: "boolean", def: false, id: "accessCodeImage" }, // default: disabled

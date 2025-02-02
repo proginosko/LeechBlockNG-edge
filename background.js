@@ -31,6 +31,7 @@ var gFocusWindowId = 0;
 var gClockOffset = 0;
 var gIgnoreJumpSecs = 0;
 var gAllFocused = false;
+var gUseDocFocus = true;
 var gOverrideIcon = false;
 var gSaveSecsCount = 0;
 
@@ -49,6 +50,7 @@ function initTab(id) {
 			url: "about:blank",
 			incog: false,
 			audible: false,
+			focused: false,
 			loaded: false,
 			loadedTime: 0
 		};
@@ -217,6 +219,7 @@ function retrieveOptions(update) {
 		gClockOffset = +gOptions["clockOffset"];
 		gIgnoreJumpSecs = +gOptions["ignoreJumpSecs"];
 		gAllFocused = gOptions["allFocused"];
+		gUseDocFocus = gOptions["useDocFocus"];
 
 		createRegExps();
 		refreshMenus();
@@ -404,7 +407,8 @@ function processTabs(active) {
 		for (let tab of tabs) {
 			initTab(tab.id);
 
-			let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId);
+			let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId)
+					&& (!gIsAndroid || !gUseDocFocus || gTabs[tab.id].focused);
 
 			gTabs[tab.id].incog = tab.incognito;
 			gTabs[tab.id].audible = tab.audible;
@@ -855,14 +859,19 @@ function clockPageTime(id, open, focus) {
 
 	// Update time data if necessary
 	if (secsOpen > 0 || secsFocus > 0) {
-		updateTimeData(gTabs[id].url, gTabs[id].referrer, gTabs[id].audible, secsOpen, secsFocus);
+		updateTimeData(id, secsOpen, secsFocus);
 	}
 }
 
 // Update time data for specified page
 //
-function updateTimeData(url, referrer, audible, secsOpen, secsFocus) {
-	//log("updateTimeData: " + url + " " + secsOpen + " " + secsFocus);
+function updateTimeData(id, secsOpen, secsFocus) {
+	//log("updateTimeData: " + id + " " + secsOpen + " " + secsFocus);
+
+	let referrer = gTabs[id].referrer;
+	let url = gTabs[id].url;
+	let incog = gTabs[id].incog;
+	let audible = gTabs[id].audible;
 
 	// Get parsed URL for this page
 	let parsedURL = getParsedURL(url);
@@ -880,6 +889,10 @@ function updateTimeData(url, referrer, audible, secsOpen, secsFocus) {
 		let allowRE = gRegExps[set].allow;
 		let referRE = gRegExps[set].refer;
 		if (!blockRE && !referRE) continue; // no block for this set
+
+		// Check incognito mode
+		let incogMode = gOptions[`incogMode${set}`];
+		if ((incogMode == 1 && incog) || (incogMode == 2 && !incog)) continue;
 
 		// Get option for counting time only when tab is playing audio
 		let countAudio = gOptions[`countAudio${set}`];
@@ -1041,13 +1054,16 @@ function createBlockInfo(id, url) {
 	// Get theme
 	let theme = gOptions["theme"];
 
+	// Get custom style
+	let customStyle = gOptions["customStyle"];
+
 	// Get parsed URL
 	let parsedURL = getParsedURL(url);
 	let pageURL = parsedURL.page;
 
 	if (parsedURL.args == null || parsedURL.args.length < 2) {
 		warn("Cannot create block info: not enough arguments in URL.");
-		return { theme: theme };
+		return { theme: theme, customStyle: customStyle };
 	}
 
 	// Get block set and URL (including hash part) of blocked page
@@ -1099,6 +1115,7 @@ function createBlockInfo(id, url) {
 
 	return {
 		theme: theme,
+		customStyle: customStyle,
 		blockedSet: blockedSet,
 		blockedSetName: blockedSetName,
 		blockedURL: blockedURL,
@@ -1509,11 +1526,20 @@ function addSitesToSet(siteList, set) {
 	// Get sites for this set
 	let sites = gOptions[`sites${set}`];
 
-	// Add sites if not exceptions and not already included
+	// Get keyword info
+	let keywordRE = gOptions[`keywordRE${set}`];
+	let allowKeywords = gOptions[`allowKeywords${set}`];
+
+	// Add sites to list
 	let patterns = sites.split(/\s+/);
 	for (let site of siteList.split(/\s+/)) {
-		if (site.charAt(0) != "+" && patterns.indexOf(site) < 0) {
-			patterns.push(site);
+		let firstChar = site.charAt(0);
+		// Add item only if not exception and not already in list
+		if (firstChar != "+" && patterns.indexOf(site) < 0) {
+			// Add keywords only if keywords already there (and not as allow-condition)
+			if (firstChar != "~" || (keywordRE && !allowKeywords)) {
+				patterns.push(site);
+			}
 		}
 	}
 
@@ -1563,6 +1589,46 @@ function handleMenuClick(info, tab) {
 	}
 }
 
+function handleCommand(command) {
+	//log("handleCommand: " + command);
+
+	switch(command) {
+	
+		case "lb-options":
+			browser.runtime.openOptionsPage();
+			break;
+
+		case "lb-statistics":
+			openExtensionPage("stats.html");
+			break;
+		
+		case "lb-lockdown":
+			openExtensionPage("lockdown.html");
+			break;
+		
+		case "lb-override":
+			openExtensionPage("override.html");
+			break;
+		
+		case "lb-cancel-override":
+			applyOverride(0);
+			break;
+
+		case "lb-add-sites":
+			openExtensionPage("add-sites.html");
+			break;
+
+		case "lb-reset-rollover":
+			resetRolloverTime();
+			break;
+
+		case "lb-discard-time":
+			discardRemainingTime();
+			break;
+
+	}
+}
+
 function handleMessage(message, sender, sendResponse) {
 	if (!sender) {
 		warn("No sender!");
@@ -1605,6 +1671,11 @@ function handleMessage(message, sender, sendResponse) {
 		case "discard-time":
 			// Discard remaining time
 			discardRemainingTime();
+			break;
+
+		case "focus":
+			// Tab focus event received
+			gTabs[sender.tab.id].focused = message.focus;
 			break;
 
 		case "loaded":
@@ -1682,7 +1753,11 @@ function handleTabUpdated(tabId, changeInfo, tab) {
 		return;
 	}
 
-	let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId);
+	let focus = tab.active && (gAllFocused || !gFocusWindowId || tab.windowId == gFocusWindowId)
+			&& (!gIsAndroid || !gUseDocFocus || gTabs[tab.id].focused);
+
+	gTabs[tab.id].incog = tab.incognito;
+	gTabs[tab.id].audible = tab.audible;
 
 	if (changeInfo.url) {
 		gTabs[tabId].url = getCleanURL(changeInfo.url);
@@ -1708,6 +1783,8 @@ function handleTabActivated(activeInfo) {
 	gPrevActiveTabId = activeInfo.previousTabId;
 
 	initTab(tabId);
+
+	gTabs[tabId].focused = true;
 
 	if (!gGotOptions) {
 		return;
@@ -1808,6 +1885,10 @@ browser.action.setPopup({ popup: localePath + "popup.html" });
 
 if (browser.contextMenus) {
 	browser.contextMenus.onClicked.addListener(handleMenuClick);
+}
+
+if (browser.commands) {
+	browser.commands.onCommand.addListener(handleCommand);
 }
 
 browser.runtime.onMessage.addListener(handleMessage);
